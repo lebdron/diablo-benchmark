@@ -93,8 +93,8 @@ type unsignedTransaction struct {
 
 func newUnsignedTransaction(tx *solana.Transaction, signers []solana.PrivateKey) *unsignedTransaction {
 	signersMap := make(map[solana.PublicKey]*solana.PrivateKey)
-	for _, signer := range signers {
-		signersMap[signer.PublicKey()] = &signer
+	for i := 0; i < len(signers); i++ {
+		signersMap[signers[i].PublicKey()] = &signers[i]
 	}
 	return &unsignedTransaction{
 		tx:      tx,
@@ -236,13 +236,13 @@ func newDeployContractTransactionBatches(appli *application, from, program, stor
 	}
 
 	transactionBatches[0] = append(transactionBatches[0],
-		newParameterlessTransaction(initialBuilder, []solana.PrivateKey{from.private}, provider))
+		newParameterlessTransaction(initialBuilder, []solana.PrivateKey{from.private, program.private}, provider))
 	for _, builder := range writeBuilders {
 		transactionBatches[1] = append(transactionBatches[1],
-			newParameterlessTransaction(builder, []solana.PrivateKey{from.private}, provider))
+			newParameterlessTransaction(builder, []solana.PrivateKey{from.private, program.private}, provider))
 	}
 	transactionBatches[2] = append(transactionBatches[2],
-		newParameterlessTransaction(finalBuilder, []solana.PrivateKey{from.private}, provider))
+		newParameterlessTransaction(finalBuilder, []solana.PrivateKey{from.private, program.private}, provider))
 
 	// assuming that constructor does not have arguments
 	{
@@ -282,7 +282,7 @@ func newDeployContractTransactionBatches(appli *application, from, program, stor
 				}, data),
 		)
 		transactionBatches[3] = append(transactionBatches[3],
-			newParameterlessTransaction(builder, []solana.PrivateKey{from.private}, provider))
+			newParameterlessTransaction(builder, []solana.PrivateKey{from.private, storage.private}, provider))
 	}
 
 	return transactionBatches, nil

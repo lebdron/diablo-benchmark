@@ -157,7 +157,7 @@ func (this *BlockchainBuilder) CreateContract(name string) (interface{}, error) 
 
 	this.logger.Tracef("deploy new contract '%s'", name)
 
-	for _, batch := range txBatches {
+	for batchidx, batch := range txBatches {
 		var wg sync.WaitGroup
 		results := make([]error, len(batch))
 		for idx, tx := range batch {
@@ -176,10 +176,16 @@ func (this *BlockchainBuilder) CreateContract(name string) (interface{}, error) 
 				}
 			}(idx, tx)
 		}
+		wg.Wait()
+		for txidx, err := range results {
+			if err != nil {
+				return nil, fmt.Errorf("batch %d, transaction %d, %v", batchidx, txidx, err)
+			}
+		}
 	}
 
-	this.logger.Tracef("new contract '%s' deployed with id %s", name,
-		program.public.String())
+	this.logger.Tracef("new contract '%s' deployed with program id %s and storage id %s", name,
+		program.public.String(), storage.public.String())
 
 	return &contract{
 		appli:   appli,
