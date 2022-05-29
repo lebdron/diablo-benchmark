@@ -1,6 +1,5 @@
 package nethereum
 
-
 import (
 	"bytes"
 	"context"
@@ -13,23 +12,22 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-
 type BlockchainClient struct {
-	logger     core.Logger
-	client     *ethclient.Client
-	manager    nonceManager
-	provider   parameterProvider
-	preparer   transactionPreparer
-	confirmer  transactionConfirmer
+	logger    core.Logger
+	client    *ethclient.Client
+	manager   nonceManager
+	provider  parameterProvider
+	preparer  transactionPreparer
+	confirmer transactionConfirmer
 }
 
 func newClient(logger core.Logger, client *ethclient.Client, manager nonceManager, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
 	return &BlockchainClient{
-		logger: logger,
-		client: client,
-		manager: manager,
-		provider: provider,
-		preparer: preparer,
+		logger:    logger,
+		client:    client,
+		manager:   manager,
+		provider:  provider,
+		preparer:  preparer,
 		confirmer: confirmer,
 	}
 }
@@ -81,7 +79,6 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 	return this.confirmer.confirm(iact)
 }
 
-
 type transactionPreparer interface {
 	prepare(transaction) error
 }
@@ -98,7 +95,7 @@ func (this *nothingTransactionPreparer) prepare(transaction) error {
 }
 
 type signatureTransactionPreparer struct {
-	logger  core.Logger
+	logger core.Logger
 }
 
 func newSignatureTransactionPreparer(logger core.Logger) transactionPreparer {
@@ -118,26 +115,26 @@ func (this *signatureTransactionPreparer) prepare(tx transaction) error {
 	return nil
 }
 
-
 type transactionConfirmer interface {
 	confirm(core.Interaction) error
 }
 
 type pollblkTransactionConfirmer struct {
-	logger    core.Logger
-	client    *ethclient.Client
-	ctx       context.Context
-	err       error
-	lock      sync.Mutex
-	pendings  map[string]*pollblkTransactionConfirmerPending
+	logger   core.Logger
+	client   *ethclient.Client
+	ctx      context.Context
+	err      error
+	lock     sync.Mutex
+	pendings map[string]*pollblkTransactionConfirmerPending
+	observer parameterObsrever
 }
 
 type pollblkTransactionConfirmerPending struct {
-	channel  chan<- error
-	iact     core.Interaction
+	channel chan<- error
+	iact    core.Interaction
 }
 
-func newPollblkTransactionConfirmer(logger core.Logger, client *ethclient.Client, ctx context.Context) *pollblkTransactionConfirmer {
+func newPollblkTransactionConfirmer(logger core.Logger, client *ethclient.Client, ctx context.Context, observer parameterObsrever) *pollblkTransactionConfirmer {
 	var this pollblkTransactionConfirmer
 
 	this.logger = logger
@@ -145,6 +142,7 @@ func newPollblkTransactionConfirmer(logger core.Logger, client *ethclient.Client
 	this.ctx = ctx
 	this.err = nil
 	this.pendings = make(map[string]*pollblkTransactionConfirmerPending)
+	this.observer = observer
 
 	go this.run()
 
@@ -171,7 +169,7 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 
 	pending = &pollblkTransactionConfirmerPending{
 		channel: channel,
-		iact: iact,
+		iact:    iact,
 	}
 
 	this.lock.Lock()
@@ -189,7 +187,7 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 		close(channel)
 		return this.err
 	} else {
-		return <- channel
+		return <-channel
 	}
 }
 
@@ -266,6 +264,8 @@ func (this *pollblkTransactionConfirmer) processBlock(number *big.Int) error {
 		return err
 	}
 
+	go this.observer.updateParameters(block.Header())
+
 	stxs = block.Transactions()
 	hashes = make([]string, len(stxs))
 
@@ -298,16 +298,17 @@ func (this *pollblkTransactionConfirmer) run() {
 
 	this.logger.Tracef("subscribe to new head events")
 
-	loop: for {
+loop:
+	for {
 		select {
-		case event = <- events:
+		case event = <-events:
 			err = this.processBlock(event.Number)
 			if err != nil {
 				break loop
 			}
-		case err = <- subcription.Err():
+		case err = <-subcription.Err():
 			break loop
-		case <- this.ctx.Done():
+		case <-this.ctx.Done():
 			err = this.ctx.Err()
 			break loop
 		}

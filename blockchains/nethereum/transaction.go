@@ -112,7 +112,7 @@ func (this *unsignedTransaction) getTx() (virtualTransaction, *types.Transaction
 	var stx *types.Transaction
 	var err error
 
-	stx, err = types.SignTx(this.tx, types.NewEIP155Signer(this.chain),
+	stx, err = types.SignTx(this.tx, types.NewLondonSigner(this.chain),
 		this.from)
 	if err != nil {
 		return this, nil, err
@@ -209,9 +209,22 @@ func (this *transferTransaction) getTx() (virtualTransaction, *types.Transaction
 		return this, nil, err
 	}
 
-	tx = types.NewTransaction(nonce, this.to,
-		big.NewInt(int64(this.amount)), params.gasLimit,
-		params.gasPrice, []byte{})
+	if params.gasTipCap == nil {
+		tx = types.NewTransaction(nonce, this.to,
+			big.NewInt(int64(this.amount)), params.gasLimit,
+			params.gasPrice, []byte{})
+	} else {
+		tx = types.NewTx(&types.DynamicFeeTx{
+			ChainID:   params.chainId,
+			Nonce:     nonce,
+			GasTipCap: params.gasTipCap,
+			GasFeeCap: params.gasFeeCap,
+			Gas:       params.gasLimit,
+			To:        &this.to,
+			Value:     big.NewInt(int64(this.amount)),
+			Data:      []byte{},
+		})
+	}
 
 	return newUnsignedTransaction(params.chainId, tx,
 		this.from).getTx()
@@ -254,8 +267,20 @@ func (this *deployContractTransaction) getTx() (virtualTransaction, *types.Trans
 		return this, nil, err
 	}
 
-	tx = types.NewContractCreation(nonce, big.NewInt(0),
-		params.gasLimit, params.gasPrice, this.appli.text)
+	if params.gasTipCap == nil {
+		tx = types.NewContractCreation(nonce, big.NewInt(0),
+			params.gasLimit, params.gasPrice, this.appli.text)
+	} else {
+		tx = types.NewTx(&types.DynamicFeeTx{
+			ChainID:   params.chainId,
+			Nonce:     nonce,
+			GasTipCap: params.gasTipCap,
+			GasFeeCap: params.gasFeeCap,
+			Gas:       params.gasLimit,
+			Value:     big.NewInt(0),
+			Data:      this.appli.text,
+		})
+	}
 
 	return newUnsignedTransaction(params.chainId, tx,
 		this.from).getTx()
@@ -355,8 +380,21 @@ func (this *invokeTransaction) getTx() (virtualTransaction, *types.Transaction, 
 		return this, nil, err
 	}
 
-	tx = types.NewTransaction(nonce, this.appid, big.NewInt(int64(0)),
-		params.gasLimit, params.gasPrice, this.payload)
+	if params.gasTipCap == nil {
+		tx = types.NewTransaction(nonce, this.appid, big.NewInt(0),
+			params.gasLimit, params.gasPrice, this.payload)
+	} else {
+		tx = types.NewTx(&types.DynamicFeeTx{
+			ChainID:   params.chainId,
+			Nonce:     nonce,
+			GasTipCap: params.gasTipCap,
+			GasFeeCap: params.gasFeeCap,
+			Gas:       params.gasLimit,
+			To:        &this.appid,
+			Value:     big.NewInt(0),
+			Data:      this.payload,
+		})
+	}
 
 	return newUnsignedTransaction(params.chainId, tx,
 		this.from).getTx()
@@ -448,13 +486,83 @@ func (this *staticNonceManager) nextNonce(from common.Address, offset uint64) (u
 }
 
 type parameters struct {
-	chainId  *big.Int
-	gasLimit uint64
-	gasPrice *big.Int
+	chainId   *big.Int
+	gasLimit  uint64
+	gasPrice  *big.Int
+	baseFee   *big.Int
+	gasTipCap *big.Int
+	gasFeeCap *big.Int
 }
 
 type parameterProvider interface {
 	getParams() (*parameters, error)
+}
+
+type parameterObsrever interface {
+	updateParameters(header *types.Header)
+}
+
+type observerParameterProvider struct {
+	lock       sync.RWMutex
+	parameters *parameters
+	err        error
+	client     *ethclient.Client
+}
+
+func makeObserverParameterProvider(client *ethclient.Client) (*observerParameterProvider, error) {
+	params, err := newDirectParameterProvider(client).getParams()
+	if err != nil {
+		return nil, err
+	}
+
+	provider := newObserverParameterProvider(params, client)
+	header, err := client.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	provider.updateParameters(header)
+
+	return provider, nil
+}
+
+func newObserverParameterProvider(parameters *parameters, client *ethclient.Client) *observerParameterProvider {
+	return &observerParameterProvider{
+		parameters: parameters,
+		client:     client,
+	}
+}
+
+func (this *observerParameterProvider) updateParameters(header *types.Header) {
+	if header.BaseFee != nil {
+		gasTipCap, err := this.client.SuggestGasTipCap(context.Background())
+		if err != nil {
+			this.lock.Lock()
+			defer this.lock.Unlock()
+			this.err = err
+			return
+		}
+		gasFeeCap := new(big.Int).Add(
+			gasTipCap,
+			new(big.Int).Mul(header.BaseFee, big.NewInt(2)),
+		)
+		this.lock.Lock()
+		defer this.lock.Unlock()
+		this.parameters = &parameters{
+			chainId:   this.parameters.chainId,
+			gasLimit:  this.parameters.gasLimit,
+			gasPrice:  this.parameters.gasPrice,
+			baseFee:   header.BaseFee,
+			gasTipCap: gasTipCap,
+			gasFeeCap: gasFeeCap,
+		}
+	}
+}
+
+func (this *observerParameterProvider) getParams() (*parameters, error) {
+	this.lock.RLock()
+	defer this.lock.RUnlock()
+	return this.parameters, this.err
 }
 
 type staticParameterProvider struct {
