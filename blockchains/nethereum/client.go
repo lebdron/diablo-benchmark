@@ -285,10 +285,12 @@ func (this *pollblkTransactionConfirmer) processBlock(number *big.Int) error {
 func (this *pollblkTransactionConfirmer) run() {
 	var subcription ethereum.Subscription
 	var events chan *types.Header
+	var errors chan error
 	var event *types.Header
 	var err error
 
 	events = make(chan *types.Header)
+	errors = make(chan error)
 
 	subcription, err = this.client.SubscribeNewHead(this.ctx, events)
 	if err != nil {
@@ -302,10 +304,13 @@ loop:
 	for {
 		select {
 		case event = <-events:
-			err = this.processBlock(event.Number)
-			if err != nil {
-				break loop
-			}
+			go func(number *big.Int) {
+				if err := this.processBlock(number); err != nil {
+					errors <- err
+				}
+			}(event.Number)
+		case err = <-errors:
+			break loop
 		case err = <-subcription.Err():
 			break loop
 		case <-this.ctx.Done():
@@ -317,6 +322,7 @@ loop:
 	subcription.Unsubscribe()
 
 	close(events)
+	close(errors)
 
 	this.flushPendings(err)
 }
