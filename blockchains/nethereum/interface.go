@@ -171,11 +171,15 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 
 	logger.Tracef("new client")
 
-	logger.Tracef("use endpoint '%s'", view[0])
-	client, err = ethclient.Dial("ws://" + view[0])
-	if err != nil {
-		return nil, err
+	clients := make([]*ethclient.Client, len(view))
+	for i, node := range view {
+		clients[i], err = ethclient.Dial("ws://" + node)
+		if err != nil {
+			return nil, err
+		}
 	}
+	logger.Tracef("use endpoint '%s'", view[0])
+	client = clients[0]
 
 	observerProvider, err := makeObserverParameterProvider(client)
 	if err != nil {
@@ -210,7 +214,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 
 	manager = newStaticNonceManager(logger, client)
 
-	return newClient(logger, client, manager, provider, preparer,
+	return newClient(logger, clients, manager, provider, preparer,
 		confirmer), nil
 }
 

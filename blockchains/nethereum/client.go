@@ -6,6 +6,7 @@ import (
 	"diablo-benchmark/core"
 	"math/big"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -13,23 +14,31 @@ import (
 )
 
 type BlockchainClient struct {
-	logger    core.Logger
-	client    *ethclient.Client
-	manager   nonceManager
-	provider  parameterProvider
-	preparer  transactionPreparer
-	confirmer transactionConfirmer
+	logger     core.Logger
+	clients    []*ethclient.Client
+	manager    nonceManager
+	provider   parameterProvider
+	preparer   transactionPreparer
+	confirmer  transactionConfirmer
+	rrEndpoint uint64
 }
 
-func newClient(logger core.Logger, client *ethclient.Client, manager nonceManager, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
+func newClient(logger core.Logger, clients []*ethclient.Client, manager nonceManager, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
 	return &BlockchainClient{
-		logger:    logger,
-		client:    client,
-		manager:   manager,
-		provider:  provider,
-		preparer:  preparer,
-		confirmer: confirmer,
+		logger:     logger,
+		clients:    clients,
+		manager:    manager,
+		provider:   provider,
+		preparer:   preparer,
+		confirmer:  confirmer,
+		rrEndpoint: 0,
 	}
+}
+
+func (this *BlockchainClient) client() *ethclient.Client {
+	endpoint := atomic.AddUint64(&this.rrEndpoint, 1)
+	client := this.clients[endpoint%uint64(len(this.clients))]
+	return client
 }
 
 func (this *BlockchainClient) DecodePayload(encoded []byte) (interface{}, error) {
@@ -70,7 +79,7 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 
 	iact.ReportSubmit()
 
-	err = this.client.SendTransaction(context.Background(), stx)
+	err = this.client().SendTransaction(context.Background(), stx)
 	if err != nil {
 		iact.ReportAbort()
 		return err
