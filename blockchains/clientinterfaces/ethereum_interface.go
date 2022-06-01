@@ -175,12 +175,15 @@ func (e *EthereumInterface) ParseWorkload(workload workloadgenerators.WorkerThre
 
 // parseBlocksForTransactions parses the the given block number for the transactions
 func (e *EthereumInterface) parseBlocksForTransactions(blockNumber *big.Int) {
+	zap.L().Debug("poll new block", zap.Any("number", blockNumber))
 	block, err := e.PrimaryNode.BlockByNumber(context.Background(), blockNumber)
 
 	if err != nil {
 		zap.L().Warn(err.Error())
 		return
 	}
+
+	zap.L().Debug("received", zap.Any("block", blockNumber), zap.Any("transactions", len(block.Transactions())))
 
 	tNow := time.Now()
 	var tAdd uint64
@@ -341,6 +344,7 @@ func (e *EthereumInterface) _sendTx(endpoint int, txSigned ethtypes.Transaction)
 	}
 
 	sendTime := time.Now()
+	zap.L().Debug("before send", zap.Any("transaction", txSigned.Hash()), zap.Any("time", sendTime))
 	transactionInfo := []time.Time{sendTime}
 	err := client.SendTransaction(context.Background(), &txSigned)
 
@@ -355,6 +359,9 @@ func (e *EthereumInterface) _sendTx(endpoint int, txSigned ethtypes.Transaction)
 		atomic.AddUint64(&e.NumTxDone, 1)
 		transactionInfo = append(transactionInfo, sendTime)
 	}
+
+	dur := time.Now().Sub(sendTime)
+	zap.L().Debug("after send", zap.Any("transaction", txSigned.Hash()), zap.Any("duration", dur))
 
 	e.bigLock.Lock()
 	e.TransactionInfo[txSigned.Hash().String()] = transactionInfo
