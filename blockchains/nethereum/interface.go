@@ -1,6 +1,5 @@
 package nethereum
 
-
 import (
 	"context"
 	"crypto/ecdsa"
@@ -12,11 +11,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 )
-
 
 type BlockchainInterface struct {
 }
@@ -65,7 +63,7 @@ func (this *BlockchainInterface) Builder(params map[string]string, env []string,
 
 		if key == "contracts" {
 			for _, value = range values {
-				logger.Debugf("with contracts from '%s'",value)
+				logger.Debugf("with contracts from '%s'", value)
 				builder.addCompiler(value)
 			}
 
@@ -77,7 +75,6 @@ func (this *BlockchainInterface) Builder(params map[string]string, env []string,
 
 	return builder, nil
 }
-
 
 func parseEnvmap(env []string) (map[string][]string, error) {
 	var ret map[string][]string = make(map[string][]string)
@@ -94,7 +91,7 @@ func parseEnvmap(env []string) (map[string][]string, error) {
 		}
 
 		key = element[:eqindex]
-		value = element[eqindex + 1:]
+		value = element[eqindex+1:]
 
 		values, found = ret[key]
 		if !found {
@@ -109,10 +106,9 @@ func parseEnvmap(env []string) (map[string][]string, error) {
 	return ret, nil
 }
 
-
 type yamlAccount struct {
-	Address  string  `yaml:"address"`
-	Private  string  `yaml:"private"`
+	Address string `yaml:"address"`
+	Private string `yaml:"private"`
 }
 
 func addPremadeAccounts(builder *BlockchainBuilder, path string) error {
@@ -163,24 +159,27 @@ func addPremadeAccounts(builder *BlockchainBuilder, path string) error {
 	return nil
 }
 
-
 func (this *BlockchainInterface) Client(params map[string]string, env, view []string, logger core.Logger) (core.BlockchainClient, error) {
 	var ctx context.Context = context.Background()
 	var confirmer transactionConfirmer
 	var preparer transactionPreparer
 	var provider parameterProvider
-	var client *ethclient.Client
 	var manager nonceManager
 	var key, value string
 	var err error
 
 	logger.Tracef("new client")
 
-	logger.Tracef("use endpoint '%s'", view[0])
-	client, err = ethclient.Dial("ws://" + view[0])
-	if err != nil {
-		return nil, err
+	clients := make([]*ethclient.Client, len(view))
+	for i, endpoint := range view {
+		client, err := ethclient.Dial("ws://" + endpoint)
+		if err != nil {
+			return nil, err
+		}
+		clients[i] = client
 	}
+	logger.Tracef("use endpoint '%s'", view[0])
+	client := clients[0]
 
 	for key, value = range params {
 		if key == "prepare" {
@@ -210,7 +209,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	manager = newStaticNonceManager(logger, client)
 	confirmer = newPollblkTransactionConfirmer(logger, client, ctx)
 
-	return newClient(logger, client, manager, provider, preparer,
+	return newClient(logger, clients, manager, provider, preparer,
 		confirmer), nil
 }
 
