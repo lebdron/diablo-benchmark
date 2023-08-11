@@ -237,7 +237,7 @@ func (this *transferTransaction) getRaw() (virtualTransaction, []byte, error) {
 		return this, nil, err
 	}
 	txparams := *params
-	txparams.Fee = 0
+	txparams.Fee = algotx.MinTxnFee
 	txparams.FlatFee = true
 
 	tx, err = algotx.MakePaymentTxn(this.from, this.to, this.amount,

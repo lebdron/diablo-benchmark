@@ -263,7 +263,7 @@ func (this *Blockchain) PrepareSimpleTransaction(from, to, amount int, note []by
 	var err error
 
 	txparams := this.params
-	txparams.Fee = 0
+	txparams.Fee = algorandtx.MinTxnFee
 	txparams.FlatFee = true
 
 	utx, err = algorandtx.MakePaymentTxn(
