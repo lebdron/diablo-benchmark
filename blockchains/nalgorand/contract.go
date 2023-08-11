@@ -1,6 +1,5 @@
 package nalgorand
 
-
 import (
 	"bufio"
 	"bytes"
@@ -15,19 +14,18 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/algorand/go-algorand-sdk/client/v2/algod"
-	"github.com/algorand/go-algorand-sdk/client/v2/common/models"
-	"github.com/algorand/go-algorand-sdk/types"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/common/models"
+	"github.com/algorand/go-algorand-sdk/v2/types"
 
 	"gopkg.in/yaml.v3"
 )
 
-
 type tealCompiler struct {
-	logger  core.Logger
-	base    string
-	client  *algod.Client
-	ctx     context.Context
+	logger core.Logger
+	base   string
+	client *algod.Client
+	ctx    context.Context
 }
 
 const clearContractSource = "#pragma version 5\nint 1\nreturn\n"
@@ -35,9 +33,9 @@ const clearContractSource = "#pragma version 5\nint 1\nreturn\n"
 func newTealCompiler(logger core.Logger, base string, client *algod.Client, ctx context.Context) *tealCompiler {
 	return &tealCompiler{
 		logger: logger,
-		base: base,
+		base:   base,
 		client: client,
-		ctx: ctx,
+		ctx:    ctx,
 	}
 }
 
@@ -95,13 +93,13 @@ func (this *tealCompiler) compile(name string) (*application, error) {
 	}
 
 	return &application{
-		logger: this.logger,
+		logger:       this.logger,
 		approvalCode: approvalCode,
-		clearCode: clearCode,
-		localSchema: *local,
+		clearCode:    clearCode,
+		localSchema:  *local,
 		globalSchema: *global,
-		parser: parser,
-		scanner: bufio.NewScanner(parser),
+		parser:       parser,
+		scanner:      bufio.NewScanner(parser),
 	}, nil
 }
 
@@ -127,7 +125,7 @@ func (this *tealCompiler) getApprovalCode(name string) ([]byte, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	
+
 	return nil, fmt.Errorf("cannot find approval code for '%s' in '%s'",
 		name, this.base)
 }
@@ -212,13 +210,13 @@ func (this *tealCompiler) compileSource(source []byte) ([]byte, error) {
 }
 
 type yamlSchemas struct {
-	Local   yamlSchema  `yaml:"local"`
-	Global  yamlSchema  `yaml:"global"`
+	Local  yamlSchema `yaml:"local"`
+	Global yamlSchema `yaml:"global"`
 }
 
 type yamlSchema struct {
-	Ints   int  `yaml:"ints"`
-	Bytes  int  `yaml:"bytes"`
+	Ints  int `yaml:"ints"`
+	Bytes int `yaml:"bytes"`
 }
 
 func (this *tealCompiler) getSchemas(name string) (*types.StateSchema, *types.StateSchema, error) {
@@ -237,12 +235,12 @@ func (this *tealCompiler) getSchemas(name string) (*types.StateSchema, *types.St
 		}
 
 		return &types.StateSchema{
-			NumUint: uint64(1),
-			NumByteSlice: uint64(1),
-		}, &types.StateSchema{
-			NumUint: uint64(1),
-			NumByteSlice: uint64(1),
-		}, nil
+				NumUint:      uint64(1),
+				NumByteSlice: uint64(1),
+			}, &types.StateSchema{
+				NumUint:      uint64(1),
+				NumByteSlice: uint64(1),
+			}, nil
 	}
 
 	decoder = yaml.NewDecoder(file)
@@ -255,23 +253,22 @@ func (this *tealCompiler) getSchemas(name string) (*types.StateSchema, *types.St
 	}
 
 	return &types.StateSchema{
-		NumUint: uint64(schemas.Local.Ints),
-		NumByteSlice: uint64(schemas.Local.Bytes),
-	}, &types.StateSchema{
-		NumUint: uint64(schemas.Global.Ints),
-		NumByteSlice: uint64(schemas.Global.Bytes),
-	}, nil
+			NumUint:      uint64(schemas.Local.Ints),
+			NumByteSlice: uint64(schemas.Local.Bytes),
+		}, &types.StateSchema{
+			NumUint:      uint64(schemas.Global.Ints),
+			NumByteSlice: uint64(schemas.Global.Bytes),
+		}, nil
 }
 
-
 type application struct {
-	logger        core.Logger
-	approvalCode  []byte
-	clearCode     []byte
-	localSchema   types.StateSchema
-	globalSchema  types.StateSchema
-	parser        *util.ServiceProcess
-	scanner       *bufio.Scanner
+	logger       core.Logger
+	approvalCode []byte
+	clearCode    []byte
+	localSchema  types.StateSchema
+	globalSchema types.StateSchema
+	parser       *util.ServiceProcess
+	scanner      *bufio.Scanner
 }
 
 func (this *application) arguments(function string) ([][]byte, error) {
@@ -280,7 +277,7 @@ func (this *application) arguments(function string) ([][]byte, error) {
 	var arg []byte
 	var err error
 
-	_, err = io.WriteString(this.parser, function + "\n")
+	_, err = io.WriteString(this.parser, function+"\n")
 	if err != nil {
 		return nil, err
 	}

@@ -1,6 +1,5 @@
 package algorand
 
-
 import (
 	"context"
 	"encoding/base64"
@@ -9,37 +8,34 @@ import (
 
 	"golang.org/x/crypto/ed25519"
 
-	"github.com/algorand/go-algorand-sdk/client/v2/algod"
-	"github.com/algorand/go-algorand-sdk/client/v2/common/models"
-	"github.com/algorand/go-algorand-sdk/crypto"
-	"github.com/algorand/go-algorand-sdk/future"
-	"github.com/algorand/go-algorand-sdk/mnemonic"
-	algorandtx "github.com/algorand/go-algorand-sdk/transaction"
-	"github.com/algorand/go-algorand-sdk/types"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/common/models"
+	"github.com/algorand/go-algorand-sdk/v2/crypto"
+	"github.com/algorand/go-algorand-sdk/v2/mnemonic"
+	algorandtx "github.com/algorand/go-algorand-sdk/v2/transaction"
+	"github.com/algorand/go-algorand-sdk/v2/types"
 )
 
-
 type account struct {
-	address   string                           // account blockchan address
-	key       ed25519.PrivateKey                     // account private key
+	address string             // account blockchan address
+	key     ed25519.PrivateKey // account private key
 }
 
 type Blockchain struct {
-	clients   []*algod.Client                  // clients to endpoint nodes
-	accounts  []account                              // blockchain accounts
-	params  types.SuggestedParams                 // transaction parameters
+	clients  []*algod.Client       // clients to endpoint nodes
+	accounts []account             // blockchain accounts
+	params   types.SuggestedParams // transaction parameters
 }
 
 type ContractValue struct {
-	Bytes  string
-	Type   uint64
-	Uint   uint64
+	Bytes string
+	Type  uint64
+	Uint  uint64
 }
 
 type ContractState struct {
-	Global  map[string]ContractValue
+	Global map[string]ContractValue
 }
-
 
 func NewBlockchain(config *Config) (*Blockchain, error) {
 	var pk ed25519.PrivateKey
@@ -51,7 +47,7 @@ func NewBlockchain(config *Config) (*Blockchain, error) {
 	ret.clients = make([]*algod.Client, config.Size())
 	for i = 0; i < config.Size(); i++ {
 		ret.clients[i], err = algod.MakeClient(
-			"http://" + config.GetNodeAddress(i),
+			"http://"+config.GetNodeAddress(i),
 			config.GetNodeToken(i))
 		if err != nil {
 			return nil, err
@@ -66,8 +62,8 @@ func NewBlockchain(config *Config) (*Blockchain, error) {
 		}
 
 		ret.accounts[i] = account{
-			address:  config.GetAccountAddress(i),
-			key:      pk,
+			address: config.GetAccountAddress(i),
+			key:     pk,
 		}
 	}
 
@@ -80,7 +76,6 @@ func NewBlockchain(config *Config) (*Blockchain, error) {
 	return &ret, nil
 }
 
-
 func (this *Blockchain) Size() int {
 	return len(this.clients)
 }
@@ -88,7 +83,6 @@ func (this *Blockchain) Size() int {
 func (this *Blockchain) Population() int {
 	return len(this.accounts)
 }
-
 
 const clearContractSource = "#pragma version 5\nint 1\nreturn\n"
 
@@ -113,13 +107,13 @@ func (this *Blockchain) PrepareDeployTransaction(from int, source []byte, localI
 	var err error
 
 	localSchema = types.StateSchema{
-		NumUint:       uint64(localInts),
-		NumByteSlice:  uint64(localBytes),
+		NumUint:      uint64(localInts),
+		NumByteSlice: uint64(localBytes),
 	}
 
 	globalSchema = types.StateSchema{
-		NumUint:       uint64(globalInts),
-		NumByteSlice:  uint64(globalBytes),
+		NumUint:      uint64(globalInts),
+		NumByteSlice: uint64(globalBytes),
 	}
 
 	approvalCode, err = this.compileTeal(source)
@@ -137,7 +131,7 @@ func (this *Blockchain) PrepareDeployTransaction(from int, source []byte, localI
 		return nil, err
 	}
 
-	utx, err = future.MakeApplicationCreateTx(false, approvalCode,
+	utx, err = algorandtx.MakeApplicationCreateTx(false, approvalCode,
 		clearCode, globalSchema, localSchema, nil, nil, nil, nil,
 		this.params, addr, note, types.Digest{}, [32]byte{},
 		types.Address{})
@@ -217,7 +211,6 @@ func (this *Blockchain) ReadContractGlobalState(endpoint, from int, appid uint64
 	return nil, fmt.Errorf("cannot find application %u", appid)
 }
 
-
 func (this *Blockchain) PrepareOptInTransaction(from int, appid uint64, note []byte) ([]byte, error) {
 	var utx types.Transaction
 	var addr types.Address
@@ -229,7 +222,7 @@ func (this *Blockchain) PrepareOptInTransaction(from int, appid uint64, note []b
 		return nil, err
 	}
 
-	utx, err = future.MakeApplicationOptInTx(appid, nil, nil, nil, nil,
+	utx, err = algorandtx.MakeApplicationOptInTx(appid, nil, nil, nil, nil,
 		this.params, addr, note, types.Digest{}, [32]byte{},
 		types.Address{})
 	if err != nil {
@@ -240,7 +233,6 @@ func (this *Blockchain) PrepareOptInTransaction(from int, appid uint64, note []b
 
 	return ret, err
 }
-
 
 func (this *Blockchain) PrepareNoOpTransaction(from int, appid uint64, args [][]byte, note []byte) ([]byte, error) {
 	var utx types.Transaction
@@ -253,7 +245,7 @@ func (this *Blockchain) PrepareNoOpTransaction(from int, appid uint64, args [][]
 		return nil, err
 	}
 
-	utx, err = future.MakeApplicationNoOpTx(appid, args, nil, nil, nil,
+	utx, err = algorandtx.MakeApplicationNoOpTx(appid, args, nil, nil, nil,
 		this.params, addr, note, types.Digest{}, [32]byte{},
 		types.Address{})
 	if err != nil {
@@ -265,17 +257,18 @@ func (this *Blockchain) PrepareNoOpTransaction(from int, appid uint64, args [][]
 	return ret, err
 }
 
-
 func (this *Blockchain) PrepareSimpleTransaction(from, to, amount int, note []byte) ([]byte, error) {
 	var utx types.Transaction
 	var ret []byte
 	var err error
 
-	utx, err = algorandtx.MakePaymentTxnWithFlatFee(
-		this.accounts[from].address, this.accounts[to].address, 0,
-		uint64(amount), uint64(this.params.FirstRoundValid),
-		uint64(this.params.LastRoundValid), note, "",
-		this.params.GenesisID, this.params.GenesisHash)
+	txparams := this.params
+	txparams.Fee = 0
+	txparams.FlatFee = true
+
+	utx, err = algorandtx.MakePaymentTxn(
+		this.accounts[from].address, this.accounts[to].address, uint64(amount),
+		note, "", txparams)
 	if err != nil {
 		return nil, err
 	}
@@ -285,13 +278,11 @@ func (this *Blockchain) PrepareSimpleTransaction(from, to, amount int, note []by
 	return ret, err
 }
 
-
 func (this *Blockchain) SendTransaction(endpoint int, raw []byte) (string, error) {
 	var client *algod.Client = this.clients[endpoint]
 
 	return client.SendRawTransaction(raw).Do(context.Background())
 }
-
 
 func (this *Blockchain) waitNextRound(endpoint int, round *uint64) error {
 	var client *algod.Client = this.clients[endpoint]
@@ -350,7 +341,6 @@ func (this *Blockchain) WaitTransaction(endpoint int, txid string) error {
 	return err
 }
 
-
 func (this *Blockchain) PollBlock(endpoint int, round uint64) (uint64, [][]byte, error) {
 	var client *algod.Client = this.clients[endpoint]
 	var ret [][]byte = make([][]byte, 0)
@@ -380,7 +370,7 @@ func (this *Blockchain) PollBlock(endpoint int, round uint64) (uint64, [][]byte,
 	if err != nil {
 		return round, nil, err
 	}
-	
+
 	for _, tx = range block.Payset {
 		ret = append(ret, tx.Txn.Note)
 	}

@@ -1,32 +1,30 @@
 package nalgorand
 
-
 import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
 	"sync"
 
-	"github.com/algorand/go-algorand-sdk/client/v2/algod"
-	"github.com/algorand/go-algorand-sdk/client/v2/common/models"
-	"github.com/algorand/go-algorand-sdk/types"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/common/models"
+	"github.com/algorand/go-algorand-sdk/v2/types"
 )
 
-
 type BlockchainClient struct {
-	logger     core.Logger
-	client     *algod.Client
-	provider   parameterProvider
-	preparer   transactionPreparer
-	confirmer  transactionConfirmer
+	logger    core.Logger
+	client    *algod.Client
+	provider  parameterProvider
+	preparer  transactionPreparer
+	confirmer transactionConfirmer
 }
 
 func newClient(logger core.Logger, client *algod.Client, preparer transactionPreparer, provider parameterProvider, confirmer transactionConfirmer) *BlockchainClient {
 	return &BlockchainClient{
-		logger: logger,
-		client: client,
-		preparer: preparer,
-		provider: provider,
+		logger:    logger,
+		client:    client,
+		preparer:  preparer,
+		provider:  provider,
 		confirmer: confirmer,
 	}
 }
@@ -70,7 +68,7 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 
 	iact.ReportSubmit()
 
-	txid,err = this.client.SendRawTransaction(raw).Do(context.Background())
+	txid, err = this.client.SendRawTransaction(raw).Do(context.Background())
 	if err != nil {
 		iact.ReportAbort()
 		return err
@@ -78,7 +76,6 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 
 	return this.confirmer.confirm(iact, txid)
 }
-
 
 type transactionPreparer interface {
 	prepare(transaction) error
@@ -96,7 +93,7 @@ func (this *nothingTransactionPreparer) prepare(transaction) error {
 }
 
 type signatureTransactionPreparer struct {
-	logger  core.Logger
+	logger core.Logger
 }
 
 func newSignatureTransactionPreparer(logger core.Logger) transactionPreparer {
@@ -118,23 +115,21 @@ func (this *signatureTransactionPreparer) prepare(tx transaction) error {
 	return nil
 }
 
-
 type transactionConfirmer interface {
 	confirm(core.Interaction, string) error
 }
 
-
 type polltxTransactionConfirmer struct {
-	logger  core.Logger
-	client  *algod.Client
-	ctx     context.Context
+	logger core.Logger
+	client *algod.Client
+	ctx    context.Context
 }
 
 func newPolltxTransactionConfirmer(logger core.Logger, client *algod.Client, ctx context.Context) *polltxTransactionConfirmer {
 	return &polltxTransactionConfirmer{
 		logger: logger,
 		client: client,
-		ctx: ctx,
+		ctx:    ctx,
 	}
 }
 
@@ -171,8 +166,6 @@ func (this *polltxTransactionConfirmer) confirm(iact core.Interaction, txid stri
 			return err
 		}
 	}
-
-	return nil
 }
 
 func (this *polltxTransactionConfirmer) waitNextRound(round *uint64) error {
@@ -200,19 +193,18 @@ func (this *polltxTransactionConfirmer) waitNextRound(round *uint64) error {
 	return nil
 }
 
-
 type pollblkTransactionConfirmer struct {
-	logger    core.Logger
-	client    *algod.Client
-	ctx       context.Context
-	err       error
-	lock      sync.Mutex
-	pendings  map[uint64]*pollblkTransactionConfirmerPending
+	logger   core.Logger
+	client   *algod.Client
+	ctx      context.Context
+	err      error
+	lock     sync.Mutex
+	pendings map[uint64]*pollblkTransactionConfirmerPending
 }
 
 type pollblkTransactionConfirmerPending struct {
-	channel  chan<- error
-	iact     core.Interaction
+	channel chan<- error
+	iact    core.Interaction
 }
 
 func newPollblkTransactionConfirmer(logger core.Logger, client *algod.Client, ctx context.Context) *pollblkTransactionConfirmer {
@@ -240,7 +232,7 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction, txid str
 
 	pending = &pollblkTransactionConfirmerPending{
 		channel: channel,
-		iact: iact,
+		iact:    iact,
 	}
 
 	this.lock.Lock()
@@ -258,7 +250,7 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction, txid str
 		close(channel)
 		return this.err
 	} else {
-		return <- channel
+		return <-channel
 	}
 }
 
@@ -362,7 +354,8 @@ func (this *pollblkTransactionConfirmer) run() {
 	round = status.LastRound + 1
 	this.logger.Tracef("start polling block at round %d", round)
 
-	loop: for {
+loop:
+	for {
 		status, err = client.StatusAfterBlock(round).Do(this.ctx)
 		if err != nil {
 			break loop

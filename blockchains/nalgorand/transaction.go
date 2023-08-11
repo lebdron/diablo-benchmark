@@ -1,6 +1,5 @@
 package nalgorand
 
-
 import (
 	"context"
 	"diablo-benchmark/util"
@@ -8,27 +7,23 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/algorand/go-algorand-sdk/client/v2/algod"
-	"github.com/algorand/go-algorand-sdk/crypto"
-	"github.com/algorand/go-algorand-sdk/future"
-	algotx "github.com/algorand/go-algorand-sdk/transaction"
-	"github.com/algorand/go-algorand-sdk/types"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
+	"github.com/algorand/go-algorand-sdk/v2/crypto"
+	algotx "github.com/algorand/go-algorand-sdk/v2/transaction"
+	"github.com/algorand/go-algorand-sdk/v2/types"
 
 	"golang.org/x/crypto/ed25519"
 )
-
 
 const (
 	transaction_type_transfer uint8 = 0
 	transaction_type_invoke   uint8 = 1
 )
 
-
 type transaction interface {
 	getRaw() ([]byte, error)
 	getUid() uint64
 }
-
 
 func uidToNote(uid uint64) []byte {
 	var ret []byte = make([]byte, 8)
@@ -46,9 +41,8 @@ func noteToUid(note []byte) (uint64, bool) {
 	return binary.LittleEndian.Uint64(note), true
 }
 
-
 type outerTransaction struct {
-	inner  virtualTransaction
+	inner virtualTransaction
 }
 
 func (this *outerTransaction) getRaw() ([]byte, error) {
@@ -80,7 +74,7 @@ func decodeTransaction(src io.Reader, provider parameterProvider) (transaction, 
 		return nil, err
 	}
 
-	switch (txtype) {
+	switch txtype {
 	case transaction_type_transfer:
 		inner, err = decodeTransferTransaction(src, provider)
 	case transaction_type_invoke:
@@ -93,9 +87,8 @@ func decodeTransaction(src io.Reader, provider parameterProvider) (transaction, 
 		return nil, err
 	}
 
-	return &outerTransaction{ inner }, nil
+	return &outerTransaction{inner}, nil
 }
-
 
 type virtualTransaction interface {
 	getRaw() (virtualTransaction, []byte, error)
@@ -103,9 +96,8 @@ type virtualTransaction interface {
 	getUid() uint64
 }
 
-
 type baseTransaction struct {
-	uid  uint64
+	uid uint64
 }
 
 func (this *baseTransaction) init(uid uint64) {
@@ -116,10 +108,9 @@ func (this *baseTransaction) getUid() uint64 {
 	return this.uid
 }
 
-
 type signedTransaction struct {
 	baseTransaction
-	raw  []byte
+	raw []byte
 }
 
 func newSignedTransaction(uid uint64, raw []byte) *signedTransaction {
@@ -135,11 +126,10 @@ func (this *signedTransaction) getRaw() (virtualTransaction, []byte, error) {
 	return this, this.raw, nil
 }
 
-
 type unsignedTransaction struct {
 	baseTransaction
-	tx   types.Transaction
-	key  ed25519.PrivateKey
+	tx  types.Transaction
+	key ed25519.PrivateKey
 }
 
 func newUnsignedTransaction(uid uint64, tx types.Transaction, key ed25519.PrivateKey) *unsignedTransaction {
@@ -164,14 +154,13 @@ func (this *unsignedTransaction) getRaw() (virtualTransaction, []byte, error) {
 	return newSignedTransaction(this.getUid(), raw), raw, nil
 }
 
-
 type transferTransaction struct {
 	baseTransaction
-	amount    uint64
-	from      string
-	to        string
-	key       ed25519.PrivateKey
-	provider  parameterProvider
+	amount   uint64
+	from     string
+	to       string
+	key      ed25519.PrivateKey
+	provider parameterProvider
 }
 
 func newTransferTransaction(uid, amount uint64, from, to string, key ed25519.PrivateKey, provider parameterProvider) *transferTransaction {
@@ -211,7 +200,7 @@ func decodeTransferTransaction(src io.Reader, provider parameterProvider) (*tran
 
 	key = ed25519.NewKeyFromSeed(buf)
 
-	return newTransferTransaction(uid, amount, from, to, key, provider),nil
+	return newTransferTransaction(uid, amount, from, to, key, provider), nil
 }
 
 func (this *transferTransaction) encode(dest io.Writer) error {
@@ -247,11 +236,12 @@ func (this *transferTransaction) getRaw() (virtualTransaction, []byte, error) {
 	if err != nil {
 		return this, nil, err
 	}
+	txparams := *params
+	txparams.Fee = 0
+	txparams.FlatFee = true
 
-	tx, err = algotx.MakePaymentTxnWithFlatFee(this.from, this.to, 0,
-		this.amount, uint64(params.FirstRoundValid),
-		uint64(params.LastRoundValid), uidToNote(this.getUid()), "",
-		params.GenesisID, params.GenesisHash)
+	tx, err = algotx.MakePaymentTxn(this.from, this.to, this.amount,
+		uidToNote(this.getUid()), "", txparams)
 	if err != nil {
 		return this, nil, err
 	}
@@ -259,13 +249,12 @@ func (this *transferTransaction) getRaw() (virtualTransaction, []byte, error) {
 	return newUnsignedTransaction(this.getUid(), tx, this.key).getRaw()
 }
 
-
 type deployContractTransaction struct {
 	baseTransaction
-	appli     *application
-	from      string
-	key       ed25519.PrivateKey
-	provider  parameterProvider
+	appli    *application
+	from     string
+	key      ed25519.PrivateKey
+	provider parameterProvider
 }
 
 func newDeployContractTransaction(uid uint64, appli *application, from string, key ed25519.PrivateKey, provider parameterProvider) *deployContractTransaction {
@@ -296,7 +285,7 @@ func (this *deployContractTransaction) getRaw() (virtualTransaction, []byte, err
 		return this, nil, err
 	}
 
-	tx, err = future.MakeApplicationCreateTx(false,
+	tx, err = algotx.MakeApplicationCreateTx(false,
 		this.appli.approvalCode, this.appli.clearCode,
 		this.appli.globalSchema, this.appli.localSchema, nil, nil,
 		nil, nil, *params, addr, uidToNote(this.getUid()),
@@ -308,14 +297,13 @@ func (this *deployContractTransaction) getRaw() (virtualTransaction, []byte, err
 	return newUnsignedTransaction(this.getUid(), tx, this.key).getRaw()
 }
 
-
 type invokeTransaction struct {
 	baseTransaction
-	appid     uint64
-	args      [][]byte
-	from      string
-	key       ed25519.PrivateKey
-	provider  parameterProvider
+	appid    uint64
+	args     [][]byte
+	from     string
+	key      ed25519.PrivateKey
+	provider parameterProvider
 }
 
 func newInvokeTransaction(uid, appid uint64, args [][]byte, from string, key ed25519.PrivateKey, provider parameterProvider) *invokeTransaction {
@@ -393,7 +381,7 @@ func (this *invokeTransaction) encode(dest io.Writer) error {
 		WriteUint64(this.appid).
 		WriteString(this.from).
 		WriteBytes(this.key.Seed())
-		
+
 	for i = range this.args {
 		output.WriteUint8(uint8(len(this.args[i]))).
 			WriteBytes(this.args[i])
@@ -418,7 +406,7 @@ func (this *invokeTransaction) getRaw() (virtualTransaction, []byte, error) {
 		return this, nil, err
 	}
 
-	tx, err = future.MakeApplicationNoOpTx(this.appid, this.args, nil, nil,
+	tx, err = algotx.MakeApplicationNoOpTx(this.appid, this.args, nil, nil,
 		nil, *params, addr, uidToNote(this.getUid()), types.Digest{},
 		[32]byte{}, types.Address{})
 	if err != nil {
@@ -428,14 +416,12 @@ func (this *invokeTransaction) getRaw() (virtualTransaction, []byte, error) {
 	return newUnsignedTransaction(this.getUid(), tx, this.key).getRaw()
 }
 
-
 type parameterProvider interface {
 	getParams() (*types.SuggestedParams, error)
 }
 
-
 type staticParameterProvider struct {
-	params  types.SuggestedParams
+	params types.SuggestedParams
 }
 
 func newStaticParameterProvider(params *types.SuggestedParams) *staticParameterProvider {
@@ -462,16 +448,15 @@ func (this *staticParameterProvider) getParams() (*types.SuggestedParams, error)
 	return &this.params, nil
 }
 
-
 type lazyParameterProvider struct {
-	client  *algod.Client
-	inner   *staticParameterProvider
+	client *algod.Client
+	inner  *staticParameterProvider
 }
 
 func newLazyParameterProvider(client *algod.Client) *lazyParameterProvider {
 	return &lazyParameterProvider{
 		client: client,
-		inner: nil,
+		inner:  nil,
 	}
 }
 
@@ -488,9 +473,8 @@ func (this *lazyParameterProvider) getParams() (*types.SuggestedParams, error) {
 	return this.inner.getParams()
 }
 
-
 type directParameterProvider struct {
-	client  *algod.Client
+	client *algod.Client
 }
 
 func newDirectParameterProvider(client *algod.Client) *directParameterProvider {

@@ -1,57 +1,54 @@
 package nalgorand
 
-
 import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
 	"fmt"
 
-	"github.com/algorand/go-algorand-sdk/client/v2/algod"
-	"github.com/algorand/go-algorand-sdk/client/v2/common/models"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/common/models"
 
 	"golang.org/x/crypto/ed25519"
 )
 
-
 type BlockchainBuilder struct {
-	logger           core.Logger
-	client           *algod.Client
-	ctx              context.Context
-	premadeAccounts  []account
-	usedAccounts     int
-	compilers        []*tealCompiler
-	applications     map[string]*application
-	provider         parameterProvider
-	lastRound        uint64
-	submitMaxTry     int
-	nextTxuid        uint64
+	logger          core.Logger
+	client          *algod.Client
+	ctx             context.Context
+	premadeAccounts []account
+	usedAccounts    int
+	compilers       []*tealCompiler
+	applications    map[string]*application
+	provider        parameterProvider
+	lastRound       uint64
+	submitMaxTry    int
+	nextTxuid       uint64
 }
 
 type account struct {
-	address   string
-	key       ed25519.PrivateKey
+	address string
+	key     ed25519.PrivateKey
 }
 
 type contract struct {
-	app    *application
-	appid  uint64
+	app   *application
+	appid uint64
 }
-
 
 func newBuilder(logger core.Logger, client *algod.Client, ctx context.Context) *BlockchainBuilder {
 	return &BlockchainBuilder{
-		logger: logger,
-		client: client,
-		ctx: ctx,
+		logger:          logger,
+		client:          client,
+		ctx:             ctx,
 		premadeAccounts: make([]account, 0),
-		usedAccounts: 0,
-		compilers: make([]*tealCompiler, 0),
-		applications: make(map[string]*application),
-		provider: newLazyParameterProvider(client),
-		lastRound: 0,
-		submitMaxTry: 10,
-		nextTxuid: 0,
+		usedAccounts:    0,
+		compilers:       make([]*tealCompiler, 0),
+		applications:    make(map[string]*application),
+		provider:        newLazyParameterProvider(client),
+		lastRound:       0,
+		submitMaxTry:    10,
+		nextTxuid:       0,
 	}
 }
 
@@ -62,7 +59,7 @@ func (this *BlockchainBuilder) getLogger() core.Logger {
 func (this *BlockchainBuilder) addAccount(address string, key ed25519.PrivateKey) {
 	this.premadeAccounts = append(this.premadeAccounts, account{
 		address: address,
-		key: key,
+		key:     key,
 	})
 }
 
@@ -73,7 +70,6 @@ func (this *BlockchainBuilder) addCompiler(path string) {
 
 	this.compilers = append(this.compilers, compiler)
 }
-
 
 func (this *BlockchainBuilder) getBuilderAccount() (*account, error) {
 	if len(this.premadeAccounts) > 0 {
@@ -113,7 +109,6 @@ func (this *BlockchainBuilder) getApplication(name string) (*application, error)
 
 	return appli, nil
 }
-
 
 func (this *BlockchainBuilder) CreateAccount(int) (interface{}, error) {
 	var ret *account
@@ -166,9 +161,9 @@ func (this *BlockchainBuilder) CreateContract(name string) (interface{}, error) 
 	this.nextTxuid += 1
 	appid = info.ApplicationIndex
 
-	this.logger.Tracef("new contract '%s' deployed with id %d", name,appid)
+	this.logger.Tracef("new contract '%s' deployed with id %d", name, appid)
 
-	return &contract{ appli, appid }, nil
+	return &contract{appli, appid}, nil
 }
 
 func (this *BlockchainBuilder) submitTransaction(raw []byte) (*models.PendingTransactionInfoResponse, error) {
@@ -203,7 +198,7 @@ func (this *BlockchainBuilder) submitTransaction(raw []byte) (*models.PendingTra
 			break
 		}
 
-		this.logger.Tracef("observe transaction '%s' at round %d " +
+		this.logger.Tracef("observe transaction '%s' at round %d "+
 			"(try %d/%d)", txid, this.lastRound, try,
 			this.submitMaxTry)
 
@@ -232,8 +227,6 @@ func (this *BlockchainBuilder) submitTransaction(raw []byte) (*models.PendingTra
 	return nil, fmt.Errorf("failed to deploy: too slow")
 }
 
-
-
 func (this *BlockchainBuilder) CreateResource(domain string) (core.SampleFactory, bool) {
 	return nil, false
 }
@@ -256,7 +249,6 @@ func (this *BlockchainBuilder) EncodeTransfer(amount int, from, to interface{}, 
 
 	return buffer.Bytes(), nil
 }
-
 
 func (this *BlockchainBuilder) EncodeInvoke(from, to interface{}, function string, info core.InteractionInfo) ([]byte, error) {
 	var tx *invokeTransaction

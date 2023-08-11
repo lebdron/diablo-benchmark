@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	bin "github.com/gagliardetto/binary"
 	"github.com/gagliardetto/solana-go"
+	bpfloader "github.com/gagliardetto/solana-go/programs/bpf-loader"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gagliardetto/solana-go/rpc/ws"
@@ -629,69 +630,19 @@ func (s *SolanaWorkloadGenerator) CreateContractDeployTX(fromPrivKey []byte, con
 		// 4 - create storage account and call contract constructor
 		transactionBuilderBatches := make([][]*solana.TransactionBuilder, 4)
 
-		transactionBuilder := solana.NewTransactionBuilder().
-			SetFeePayer(priv.PublicKey).
-			AddInstruction(
-				system.NewCreateAccountInstruction(
-					lamports,
-					uint64(len(contract.Data)),
-					solana.BPFLoaderProgramID,
-					priv.PublicKey,
-					programAccount.PublicKey,
-				).Build())
-		transactionBuilderBatches[0] = append(transactionBuilderBatches[0], transactionBuilder)
-
-		createInstruction := func(offset int, chunk []byte) *solana.GenericInstruction {
-			data := make([]byte, len(chunk)+16)
-			binary.LittleEndian.PutUint32(data[0:], 0)
-			binary.LittleEndian.PutUint32(data[4:], uint32(offset))
-			binary.LittleEndian.PutUint32(data[8:], uint32(len(chunk)))
-			binary.LittleEndian.PutUint32(data[12:], 0)
-			copy(data[16:], chunk)
-			return solana.NewInstruction(
-				solana.BPFLoaderProgramID,
-				solana.AccountMetaSlice{
-					solana.NewAccountMeta(programAccount.PublicKey, true, true),
-				},
-				data,
-			)
-		}
-
-		chunkSize, err := calculateMaxChunkSize(func(offset int, chunk []byte) (*solana.Transaction, error) {
-			return solana.NewTransaction(
-				[]solana.Instruction{createInstruction(offset, chunk)},
-				solana.Hash{},
-				solana.TransactionPayer(priv.PublicKey))
-		})
+		initialBuilder, writeBuilders, finalBuilder, _, err := bpfloader.Deploy(
+			priv.PublicKey, nil, contract.Data, lamports,
+			solana.BPFLoaderProgramID, programAccount.PublicKey, false)
 		if err != nil {
 			return nil, err
 		}
 
-		for i := 0; i < len(contract.Data); i += chunkSize {
-			end := i + chunkSize
-			if end > len(contract.Data) {
-				end = len(contract.Data)
-			}
-			transactionBuilder = solana.NewTransactionBuilder().
-				SetFeePayer(priv.PublicKey).
-				AddInstruction(createInstruction(i, contract.Data[i:end]))
-			transactionBuilderBatches[1] = append(transactionBuilderBatches[1], transactionBuilder)
-		}
-
-		{
-			data := make([]byte, 4)
-			binary.LittleEndian.PutUint32(data[0:], 1)
-			transactionBuilder = solana.NewTransactionBuilder().
-				SetFeePayer(priv.PublicKey).
-				AddInstruction(solana.NewInstruction(
-					solana.BPFLoaderProgramID,
-					solana.AccountMetaSlice{
-						solana.NewAccountMeta(programAccount.PublicKey, true, true),
-					},
-					data,
-				))
-			transactionBuilderBatches[2] = append(transactionBuilderBatches[2], transactionBuilder)
-		}
+		transactionBuilderBatches[0] = append(
+			transactionBuilderBatches[0], initialBuilder)
+		transactionBuilderBatches[1] = append(
+			transactionBuilderBatches[1], writeBuilders...)
+		transactionBuilderBatches[2] = append(
+			transactionBuilderBatches[2], finalBuilder)
 
 		lamports, err = s.ActiveConn().rpcClient.GetMinimumBalanceForRentExemption(
 			context.Background(),
@@ -721,7 +672,7 @@ func (s *SolanaWorkloadGenerator) CreateContractDeployTX(fromPrivKey []byte, con
 			data = append(data, encodeSeeds()...)
 			data = append(data, input...)
 
-			transactionBuilder = solana.NewTransactionBuilder().
+			transactionBuilder := solana.NewTransactionBuilder().
 				SetFeePayer(priv.PublicKey).
 				AddInstruction(
 					system.NewCreateAccountInstruction(

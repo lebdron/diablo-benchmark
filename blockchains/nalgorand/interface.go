@@ -31,30 +31,26 @@
 //                         nodes. This is the default value.
 //
 
-
 package nalgorand
-
 
 import (
 	"context"
 	"diablo-benchmark/core"
 	"fmt"
-	"golang.org/x/crypto/ed25519"
-	"gopkg.in/yaml.v3"
 	"os"
 	"strings"
 
-	"github.com/algorand/go-algorand-sdk/client/v2/algod"
-	"github.com/algorand/go-algorand-sdk/mnemonic"
-)
+	"golang.org/x/crypto/ed25519"
+	"gopkg.in/yaml.v3"
 
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
+	"github.com/algorand/go-algorand-sdk/v2/mnemonic"
+)
 
 type BlockchainInterface struct {
 }
 
-const benchmarkToken =
-	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
+const benchmarkToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func (this *BlockchainInterface) Builder(params map[string]string, env []string, endpoints map[string][]string, logger core.Logger) (core.BlockchainBuilder, error) {
 	var ctx context.Context = context.Background()
@@ -78,7 +74,7 @@ func (this *BlockchainInterface) Builder(params map[string]string, env []string,
 	}
 
 	logger.Debugf("use endpoint '%s'", endpoint)
-	client, err = algod.MakeClient("http://" + endpoint, benchmarkToken)
+	client, err = algod.MakeClient("http://"+endpoint, benchmarkToken)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +97,7 @@ func (this *BlockchainInterface) Builder(params map[string]string, env []string,
 
 		if key == "contracts" {
 			for _, value = range values {
-				logger.Debugf("with contracts from '%s'",value)
+				logger.Debugf("with contracts from '%s'", value)
 
 				builder.addCompiler(value)
 			}
@@ -114,7 +110,6 @@ func (this *BlockchainInterface) Builder(params map[string]string, env []string,
 
 	return builder, nil
 }
-
 
 func parseEnvmap(env []string) (map[string][]string, error) {
 	var ret map[string][]string = make(map[string][]string)
@@ -131,7 +126,7 @@ func parseEnvmap(env []string) (map[string][]string, error) {
 		}
 
 		key = element[:eqindex]
-		value = element[eqindex + 1:]
+		value = element[eqindex+1:]
 
 		values, found = ret[key]
 		if !found {
@@ -146,10 +141,9 @@ func parseEnvmap(env []string) (map[string][]string, error) {
 	return ret, nil
 }
 
-
 type yamlAccount struct {
-	Address   string  `yaml:"address"`
-	Mnemonic  string  `yaml:"mnemonic"`
+	Address  string `yaml:"address"`
+	Mnemonic string `yaml:"mnemonic"`
 }
 
 func addPremadeAccounts(builder *BlockchainBuilder, path string) error {
@@ -186,7 +180,6 @@ func addPremadeAccounts(builder *BlockchainBuilder, path string) error {
 	return nil
 }
 
-
 func (this *BlockchainInterface) Client(params map[string]string, env, view []string, logger core.Logger) (core.BlockchainClient, error) {
 	var confirmer transactionConfirmer
 	var preparer transactionPreparer
@@ -201,7 +194,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	logger.Tracef("new client")
 
 	logger.Tracef("use endpoint '%s'", view[0])
-	client, err = algod.MakeClient("http://" + view[0], benchmarkToken)
+	client, err = algod.MakeClient("http://"+view[0], benchmarkToken)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +202,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	for key, value = range params {
 		if key == "confirm" {
 			logger.Tracef("use confirm method '%s'", value)
-			confirmer, err = parseConfirm(value, logger,client,ctx)
+			confirmer, err = parseConfirm(value, logger, client, ctx)
 			if err != nil {
 				return nil, err
 			}
