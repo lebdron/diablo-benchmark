@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"diablo-benchmark/blockchains/mock"
 	"diablo-benchmark/blockchains/nalgorand"
+	"diablo-benchmark/blockchains/naptos"
 	"diablo-benchmark/blockchains/ndiem"
 	"diablo-benchmark/blockchains/nethereum"
 	"diablo-benchmark/blockchains/nsolana"
@@ -38,6 +39,7 @@ const (
 func buildSystemMap() map[string]core.BlockchainInterface {
 	return map[string]core.BlockchainInterface{
 		"algorand": &nalgorand.BlockchainInterface{},
+		"aptos":    &naptos.BlockchainInterface{},
 		"diem":     &ndiem.BlockchainInterface{},
 		"ethereum": &nethereum.BlockchainInterface{},
 		"solana":   &nsolana.BlockchainInterface{},
@@ -47,10 +49,8 @@ func buildSystemMap() map[string]core.BlockchainInterface {
 
 func printResult(dest io.Writer, result *core.Result) {
 	var encoder *json.Encoder = json.NewEncoder(dest)
-	var err error
 
-	err = encoder.Encode(result)
-	if err != nil {
+	if err := encoder.Encode(result); err != nil {
 		fatal("cannot encode result: %s", err.Error())
 	}
 }
