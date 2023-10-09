@@ -2,6 +2,7 @@ package naptos
 
 import (
 	"crypto/ed25519"
+	"diablo-benchmark/core"
 	"diablo-benchmark/util"
 	"encoding/binary"
 	"encoding/hex"
@@ -33,7 +34,8 @@ const (
 	transaction_type_transfer uint8 = 0
 	transaction_type_invoke   uint8 = 1
 
-	maximumGasAmount = 4_000_000
+	maximumGasAmount uint64 = 500_000
+	gasUnitPrice     uint64 = 100
 
 	expirationDelay = 86400 * time.Second
 )
@@ -151,16 +153,18 @@ func (t *unsignedTransaction) getSigned() (virtualTransaction, *aptosmodels.User
 		SetSender(t.from.ToHex()).
 		SetPayload(t.payload).
 		SetExpirationTimestampSecs(expiration).
-		SetGasUnitPrice(0).
+		SetGasUnitPrice(gasUnitPrice).
 		SetMaxGasAmount(maximumGasAmount).
 		SetSequenceNumber(t.sequence).
 		Error()
 	if err != nil {
+		core.Debugf("error at tx builder %v", err)
 		return nil, nil, err
 	}
 
 	msgBytes, err := tx.GetSigningMessage()
 	if err != nil {
+		core.Debugf("error at GetSigningMessage %v", err)
 		return nil, nil, err
 	}
 
@@ -170,6 +174,7 @@ func (t *unsignedTransaction) getSigned() (virtualTransaction, *aptosmodels.User
 		Signature: signature,
 	}).Error()
 	if err != nil {
+		core.Debugf("error at SetAuthenticator %v", err)
 		return nil, nil, err
 	}
 

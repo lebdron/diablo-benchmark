@@ -1,6 +1,5 @@
 package core
 
-
 import (
 	"fmt"
 	"net"
@@ -9,17 +8,15 @@ import (
 	"time"
 )
 
-
 const (
 	WARNING_COOLDOWN float64 = 1.0
 )
 
-
 type Nsecondary struct {
-	connectAddr  string
-	env          []string
-	tags         []string
-	systemMap    map[string]BlockchainInterface
+	connectAddr string
+	env         []string
+	tags        []string
+	systemMap   map[string]BlockchainInterface
 }
 
 func NewNsecondary(primaryAddr string, primaryPort int, env, tags []string, systemMap map[string]BlockchainInterface) *Nsecondary {
@@ -27,9 +24,9 @@ func NewNsecondary(primaryAddr string, primaryPort int, env, tags []string, syst
 
 	return &Nsecondary{
 		connectAddr: addr,
-		env: env,
-		tags: tags,
-		systemMap: systemMap,
+		env:         env,
+		tags:        tags,
+		systemMap:   systemMap,
 	}
 }
 
@@ -68,19 +65,18 @@ func (this *Nsecondary) Run() error {
 	return nil
 }
 
-
 type runtime struct {
-	conn           *primaryConn
-	params         *msgPrimaryParameters
-	chainEnv       []string
-	chain          BlockchainInterface
-	clients        map[int]*runtimeClient
-	start          time.Time
-	lastSkewWarn   time.Time
-	interactions   []*runtimeInteraction
+	conn         *primaryConn
+	params       *msgPrimaryParameters
+	chainEnv     []string
+	chain        BlockchainInterface
+	clients      map[int]*runtimeClient
+	start        time.Time
+	lastSkewWarn time.Time
+	interactions []*runtimeInteraction
 
-	lock           sync.Mutex
-	lastDelayWarn  time.Time
+	lock          sync.Mutex
+	lastDelayWarn time.Time
 }
 
 func newRuntime(conn net.Conn, env, tags []string, systemMap map[string]BlockchainInterface) (*runtime, error) {
@@ -208,19 +204,19 @@ func (this *runtime) stop() error {
 
 		interaction.lock.Unlock()
 
-		Tracef("push result %d/%d", i + 1, n)
+		Tracef("push result %d/%d", i+1, n)
 		err = this.conn.pushResult(&msg)
 		if err != nil {
 			return err
 		}
 	}
-	
+
 	return this.conn.pushResult(&msgResultDone{})
 }
 
 type decodeResult struct {
-	decoded  *runtimeInteraction
-	err      error
+	decoded *runtimeInteraction
+	err     error
 }
 
 func (this *runtime) prepare() error {
@@ -237,7 +233,10 @@ func (this *runtime) prepare() error {
 
 	numDecoded = 0
 	decodeChannel = make(chan *decodeResult)
-	defer close(decodeChannel)
+	defer func() {
+		close(decodeChannel)
+		Tracef("closed decode channel")
+	}()
 
 	for {
 		msg, err = this.conn.waitPrepare()
@@ -278,8 +277,12 @@ func (this *runtime) prepare() error {
 		return fmt.Errorf("not implemented prepare message %v", msg)
 	}
 
+	Debugf("numDecoded = %d", numDecoded)
+
 	for numDecoded > 0 {
-		decodeRes = <- decodeChannel
+		decodeRes = <-decodeChannel
+
+		Debugf("read %v from decode channel", *decodeRes)
 
 		if decodeRes.err != nil {
 			return decodeRes.err
@@ -290,6 +293,8 @@ func (this *runtime) prepare() error {
 
 		numDecoded -= 1
 	}
+
+	Debugf("numDecoded = %d", numDecoded)
 
 	return nil
 }
@@ -332,7 +337,9 @@ func (this *runtime) prepareInteraction(msg *msgPrepareInteraction, decodeChanne
 
 	go func() {
 		decoded, err = decodeInteraction(client, msg)
-		decodeChannel <- &decodeResult{ decoded, err }
+		result := decodeResult{decoded, err}
+		Debugf("write %v on decode channel", result)
+		decodeChannel <- &result
 	}()
 
 	return nil
@@ -387,20 +394,19 @@ func (this *runtime) Close() error {
 	return this.conn.Close()
 }
 
-
 type runtimeClient struct {
-	rt      *runtime
-	id      int
-	logger  Logger
-	inner   BlockchainClient
+	rt     *runtime
+	id     int
+	logger Logger
+	inner  BlockchainClient
 }
 
 func newRuntimeClient(runtime *runtime, id int, logger Logger, inner BlockchainClient) *runtimeClient {
 	return &runtimeClient{
-		rt: runtime,
-		id: id,
+		rt:     runtime,
+		id:     id,
 		logger: logger,
-		inner: inner,
+		inner:  inner,
 	}
 }
 
@@ -416,22 +422,21 @@ func (this *runtimeClient) runtime() *runtime {
 	return this.rt
 }
 
-
 type runtimeInteraction struct {
-	client       *runtimeClient
-	ikind        int
-	schedTime    float64
-	opaque       interface{}
+	client    *runtimeClient
+	ikind     int
+	schedTime float64
+	opaque    interface{}
 
-	lock         sync.Mutex
-	submitted    bool
-	committed    bool
-	aborted      bool
-	done         bool
-	submitTime   time.Time
-	commitTime   time.Time
-	abortTime    time.Time
-	err          error
+	lock       sync.Mutex
+	submitted  bool
+	committed  bool
+	aborted    bool
+	done       bool
+	submitTime time.Time
+	commitTime time.Time
+	abortTime  time.Time
+	err        error
 }
 
 func newRuntimeInteraction(schedTime float64, client *runtimeClient, ikind int, opaque interface{}) *runtimeInteraction {

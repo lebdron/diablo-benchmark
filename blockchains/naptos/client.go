@@ -50,6 +50,7 @@ func (c *BlockchainClient) DecodePayload(encoded []byte) (interface{}, error) {
 
 	err = c.preparer.prepare(tx)
 	if err != nil {
+		c.logger.Debugf("error decoding transaction %v", err)
 		return nil, err
 	}
 
