@@ -150,7 +150,7 @@ func addPremadeAccounts(builder *BlockchainBuilder, path string) error {
 	}
 
 	for _, key = range keys {
-		seed, err = hex.DecodeString(key)
+		seed, err = hex.DecodeString(key[2:])
 		if err != nil {
 			return fmt.Errorf("addPremadeAccounts: failed to decode hex key: %v", err)
 		}
