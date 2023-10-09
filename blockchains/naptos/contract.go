@@ -19,16 +19,14 @@ import (
 )
 
 type moveCompiler struct {
-	logger  core.Logger
-	base    string
-	stdlibs []string
+	logger core.Logger
+	base   string
 }
 
-func newMoveCompiler(logger core.Logger, base string, stdlibs []string) *moveCompiler {
+func newMoveCompiler(logger core.Logger, base string) *moveCompiler {
 	return &moveCompiler{
-		logger:  logger,
-		base:    base,
-		stdlibs: stdlibs,
+		logger: logger,
+		base:   base,
 	}
 }
 
@@ -116,8 +114,6 @@ func (c *moveCompiler) compile(name string, owner *account) (*application, error
 }
 
 func (c *moveCompiler) compileSources(paths []string, owner *account) (string, error) {
-	var args []string = make([]string, 0)
-	var stdlib string
 	var cmd *exec.Cmd
 	var tmp string
 	var err error
@@ -127,11 +123,9 @@ func (c *moveCompiler) compileSources(paths []string, owner *account) (string, e
 		return "", err
 	}
 
+	args := make([]string, 0)
 	args = append(args, "--addresses", "Owner="+owner.signer.ToHex())
 	args = append(args, "--addresses", "Std=0x1")
-	for _, stdlib = range c.stdlibs {
-		args = append(args, "--dependency", stdlib)
-	}
 	args = append(args, "--out-dir", tmp)
 	args = append(args, paths...)
 	cmd = exec.Command("move-build", args...)

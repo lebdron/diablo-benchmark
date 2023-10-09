@@ -198,8 +198,8 @@ func (b *BlockchainBuilder) addAccount(key ed25519.PrivateKey) {
 	})
 }
 
-func (b *BlockchainBuilder) addCompiler(path string, stdlibs []string) {
-	compiler := newMoveCompiler(b.logger, path, stdlibs)
+func (b *BlockchainBuilder) addCompiler(path string) {
+	compiler := newMoveCompiler(b.logger, path)
 
 	b.compilers = append(b.compilers, compiler)
 }
