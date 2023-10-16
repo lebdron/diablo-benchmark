@@ -1,21 +1,19 @@
 package core
 
-
 import (
 	"bufio"
 	"net"
 )
 
-
 type primaryConn struct {
-	conn    net.Conn
-	reader  *bufio.Reader
-	writer  *bufio.Writer
+	conn   net.Conn
+	reader *bufio.Reader
+	writer *bufio.Writer
 }
 
 func newPrimaryConn(conn net.Conn) *primaryConn {
 	return &primaryConn{
-		conn: conn,
+		conn:   conn,
 		reader: bufio.NewReader(conn),
 		writer: bufio.NewWriter(conn),
 	}
@@ -86,16 +84,15 @@ func (this *primaryConn) Close() error {
 	return this.conn.Close()
 }
 
-
 type secondaryConn struct {
-	conn    net.Conn
-	reader  *bufio.Reader
-	writer  *bufio.Writer
+	conn   net.Conn
+	reader *bufio.Reader
+	writer *bufio.Writer
 }
 
 func newSecondaryConn(conn net.Conn) *secondaryConn {
 	return &secondaryConn{
-		conn: conn,
+		conn:   conn,
 		reader: bufio.NewReader(conn),
 		writer: bufio.NewWriter(conn),
 	}
@@ -163,4 +160,33 @@ func (this *secondaryConn) addr() string {
 
 func (this *secondaryConn) Close() error {
 	return this.conn.Close()
+}
+
+type observerConn struct {
+	conn   net.Conn
+	writer *bufio.Writer
+}
+
+func newObserverConn(conn net.Conn) *observerConn {
+	return &observerConn{
+		conn:   conn,
+		writer: bufio.NewWriter(conn),
+	}
+}
+
+func (c *observerConn) sendStart(fromPrimary *msgStart) error {
+	err := fromPrimary.encode(c.writer)
+	if err != nil {
+		return err
+	}
+
+	return c.writer.Flush()
+}
+
+func (c *observerConn) addr() string {
+	return c.conn.RemoteAddr().String()
+}
+
+func (c *observerConn) Close() error {
+	return c.conn.Close()
 }
