@@ -3,11 +3,12 @@ package core
 import (
 	"fmt"
 	"net"
-	"strings"
 )
 
 type Nprimary struct {
 	NumSecondary int
+
+	NumObserver int
 
 	SetupPath string
 
@@ -61,7 +62,7 @@ func (this *Nprimary) Run() (*Result, error) {
 		return nil, err
 	}
 
-	Debugf("wait for %d observer connections", 1)
+	Debugf("wait for %d observer connections", this.NumObserver)
 	observers, err := this.acceptObservers(setup)
 	if err != nil {
 		return nil, err
@@ -128,16 +129,7 @@ func (this *Nprimary) Run() (*Result, error) {
 
 func (p *Nprimary) acceptObservers(setup setup) ([]*remoteObserver, error) {
 	laddr := fmt.Sprintf("0.0.0.0:%d", p.ListenPort+1)
-
-	endpoints := make(map[string]struct{})
-	for _, endpoint := range setup.endpoints() {
-		// assume that the endpoints differ by port numbers
-		// TODO use a robust approach
-		parts := strings.Split(endpoint.address(), ":")
-		endpoints[parts[0]] = struct{}{}
-	}
-
-	ret := make([]*remoteObserver, len(endpoints))
+	ret := make([]*remoteObserver, p.NumObserver)
 
 	Debugf("listen for %d observer connections on %s", len(ret), laddr)
 	listener, err := net.Listen("tcp", laddr)

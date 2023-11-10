@@ -476,6 +476,29 @@ func mainPrimary(verbosity int, env []string, args []string) {
 	shorts = append(shorts, shortOption{'s', true, seedClosure})
 	longs = append(longs, longOption{"seed", true, seedClosure})
 
+	primary.NumObserver = 0
+	numObserverDefined := false
+	numObserverClosure := func(l string) error {
+		if numObserverDefined {
+			return fmt.Errorf("option specified twice")
+		}
+
+		numObserverDefined = true
+
+		intValue, err := strconv.Atoi(l)
+		if err != nil {
+			return fmt.Errorf("invalid number of observers '%s'", l)
+		} else if intValue <= 0 {
+			return fmt.Errorf("invalid number of observers %d", intValue)
+		}
+
+		primary.NumObserver = intValue
+
+		return nil
+	}
+	shorts = append(shorts, shortOption{'O', true, numObserverClosure})
+	longs = append(longs, longOption{"observers", true, numObserverClosure})
+
 	primary.MaxSkew = MAX_SKEW_DEFAULT
 	maxSkewDefined = false
 	maxSkewClosure = func(l string) error {
