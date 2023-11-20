@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -305,8 +304,7 @@ func (c *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 }
 
 func (c *pollblkTransactionConfirmer) parseTransaction(tx *aptosclient.TransactionResp) {
-	var account aptosmodels.AccountAddress
-	_, err := hex.Decode(account[:], []byte(tx.Sender[2:]))
+	account, err := aptosmodels.HexToAccountAddress(tx.Sender)
 	if err != nil {
 		c.logger.Errorf("parse account address: %s", err.Error())
 		return
