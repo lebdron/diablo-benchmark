@@ -66,12 +66,13 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 		return err
 	}
 
-	this.logger.Tracef("submit transaction %p", tx)
+	this.logger.Tracef("submit transaction %p, %v", tx, stx.Hash())
 
 	iact.ReportSubmit()
 
 	err = this.client.SendTransaction(context.Background(), stx)
 	if err != nil {
+		core.Tracef("nalgorand::BlockchainClient::TriggerInteraction error '%v'", err)
 		iact.ReportAbort()
 		return err
 	}
@@ -190,17 +191,12 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 }
 
 func (this *pollblkTransactionConfirmer) reportHashes(hashes []string) {
-	var pendings []*pollblkTransactionConfirmerPending
-	var pending *pollblkTransactionConfirmerPending
-	var hash string
-	var ok bool
-
-	pendings = make([]*pollblkTransactionConfirmerPending, 0, len(hashes))
+	pendings := make([]*pollblkTransactionConfirmerPending, 0, len(hashes))
 
 	this.lock.Lock()
 
-	for _, hash = range hashes {
-		pending, ok = this.pendings[hash]
+	for _, hash := range hashes {
+		pending, ok := this.pendings[hash]
 		if !ok {
 			continue
 		}
@@ -212,9 +208,10 @@ func (this *pollblkTransactionConfirmer) reportHashes(hashes []string) {
 
 	this.lock.Unlock()
 
-	for _, pending = range pendings {
-		this.logger.Tracef("commit transaction %p",
-			pending.iact.Payload())
+	for _, pending := range pendings {
+		tx, _ := pending.iact.Payload().(transaction).getTx()
+		this.logger.Tracef("commit transaction %p, %v",
+			pending.iact.Payload(), tx.Hash())
 		pending.iact.ReportCommit()
 		pending.channel <- nil
 		close(pending.channel)

@@ -22,7 +22,7 @@ const (
 	transaction_type_transfer uint8 = 0
 	transaction_type_invoke   uint8 = 1
 
-	transaction_gas_limit uint64 = 2000000
+	transaction_gas_limit uint64 = 2_000_000
 )
 
 type transaction interface {
@@ -216,12 +216,13 @@ func (this *transferTransaction) getTx() (virtualTransaction, *types.Transaction
 		ChainID:   params.chainId,
 		Nonce:     nonce,
 		GasTipCap: params.maxPriorityFeePerGas,
-		GasFeeCap: params.maxFeePerGas,
-		Gas:       params.gasLimit,
+		GasFeeCap: big.NewInt(1_000_000_000_000_000),
+		Gas:       21_000,
 		To:        this.to,
 		Value:     big.NewInt(int64(this.amount)),
 		Data:      []byte{},
 	})
+	core.Tracef("navalanche::transferTransaction::getTx created 'nonce '%v', gasTipCap '%v', gasFeeCap '%v', gas '%v', to '%v', value '%v', from '%v'", tx.Nonce(), tx.GasTipCap(), tx.GasFeeCap(), tx.Gas(), tx.To(), tx.Value(), from)
 
 	return newUnsignedTransaction(params.chainId, tx,
 		this.from).getTx()
@@ -545,17 +546,16 @@ func (p *cachedParameterProvider) run() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			params, err := p.provider.getParams()
-			if err != nil {
-				return
-			}
-			p.lock.Lock()
-			p.params = params
-			p.lock.Unlock()
+	for range ticker.C {
+		params, err := p.provider.getParams()
+		if err != nil {
+			core.Tracef("navalanche::cachedParameterProvider::run error '%v'", err)
+			return
 		}
+		core.Tracef("navalanche::cachedParameterProvider::run received 'gasLimit %v, maxFeePerGas %v, maxPriorityFeePerGas %v'", params.gasLimit, params.maxFeePerGas.String(), params.maxPriorityFeePerGas.String())
+		p.lock.Lock()
+		p.params = params
+		p.lock.Unlock()
 	}
 }
 
