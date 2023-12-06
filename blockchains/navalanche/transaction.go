@@ -113,7 +113,7 @@ func (this *unsignedTransaction) getTx() (virtualTransaction, *types.Transaction
 	var stx *types.Transaction
 	var err error
 
-	stx, err = types.SignTx(this.tx, types.NewEIP155Signer(this.chain),
+	stx, err = types.SignTx(this.tx, types.NewLondonSigner(this.chain),
 		this.from)
 	if err != nil {
 		return this, nil, err
