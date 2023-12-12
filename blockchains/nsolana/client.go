@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/gagliardetto/solana-go/rpc/ws"
 )
 
@@ -62,6 +67,11 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 		return err
 	}
 
+	hndl, err := this.confirmer.prepare(iact)
+	if err != nil {
+		return err
+	}
+
 	this.logger.Tracef("submit transaction %p", tx)
 
 	iact.ReportSubmit()
@@ -75,10 +85,11 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 		})
 	if err != nil {
 		iact.ReportAbort()
+		this.logger.Debugf("transaction aborted: %v", err)
 		return err
 	}
 
-	return this.confirmer.confirm(iact)
+	return hndl.confirm()
 }
 
 type transactionPreparer interface {
@@ -97,7 +108,78 @@ func (this *nothingTransactionPreparer) prepare(transaction) error {
 }
 
 type transactionConfirmer interface {
-	confirm(core.Interaction) error
+	prepare(core.Interaction) (transactionConfirmerHandle, error)
+}
+
+type transactionConfirmerHandle interface {
+	confirm() error
+}
+
+type subtxTransactionConfirmerHandle struct {
+	logger core.Logger
+	iact   core.Interaction
+	sub    *ws.SignatureSubscription
+	mwait  time.Duration
+}
+
+func (h *subtxTransactionConfirmerHandle) confirm() error {
+	tx := h.iact.Payload().(transaction)
+
+	defer h.sub.Unsubscribe()
+	res, err := h.sub.RecvWithTimeout(h.mwait)
+	if err != nil {
+		return err
+	}
+
+	if res.Value.Err != nil {
+		h.iact.ReportAbort()
+		h.logger.Tracef("transaction %p failed (%v)", &res.Value.Err)
+		return nil
+	}
+
+	h.iact.ReportCommit()
+	h.logger.Tracef("transaction %p committed", tx)
+	return nil
+}
+
+type subtxTransactionConfirmer struct {
+	logger   core.Logger
+	client   *rpc.Client
+	wsClient *ws.Client
+	ctx      context.Context
+	mtime    time.Duration
+}
+
+func newSubtxTransactionConfirmer(logger core.Logger, client *rpc.Client, wsClient *ws.Client, ctx context.Context) *subtxTransactionConfirmer {
+	return &subtxTransactionConfirmer{
+		logger:   logger,
+		client:   client,
+		wsClient: wsClient,
+		ctx:      context.Background(),
+		mtime:    60 * time.Second,
+	}
+}
+
+func (c *subtxTransactionConfirmer) prepare(iact core.Interaction) (transactionConfirmerHandle, error) {
+	tx := iact.Payload().(transaction)
+
+	stx, err := tx.getTx()
+	if err != nil {
+		return nil, err
+	}
+
+	sig := &stx.Signatures[0]
+	sub, err := c.wsClient.SignatureSubscribe(*sig, rpc.CommitmentFinalized)
+	if err != nil {
+		return nil, err
+	}
+
+	return &subtxTransactionConfirmerHandle{
+		logger: c.logger,
+		iact:   iact,
+		sub:    sub,
+		mwait:  c.mtime,
+	}, nil
 }
 
 type pollblkTransactionConfirmer struct {
@@ -108,15 +190,14 @@ type pollblkTransactionConfirmer struct {
 	err      error
 	lock     sync.Mutex
 	pendings map[solana.Signature]*pollblkTransactionConfirmerPending
-	observer parameterObsrever
 }
 
 type pollblkTransactionConfirmerPending struct {
-	channel chan<- error
+	channel chan error
 	iact    core.Interaction
 }
 
-func newPollblkTransactionConfirmer(logger core.Logger, client *rpc.Client, wsClient *ws.Client, ctx context.Context, observer parameterObsrever) *pollblkTransactionConfirmer {
+func newPollblkTransactionConfirmer(logger core.Logger, client *rpc.Client, wsClient *ws.Client, ctx context.Context) *pollblkTransactionConfirmer {
 	var this pollblkTransactionConfirmer
 
 	this.logger = logger
@@ -125,19 +206,21 @@ func newPollblkTransactionConfirmer(logger core.Logger, client *rpc.Client, wsCl
 	this.ctx = ctx
 	this.err = nil
 	this.pendings = make(map[solana.Signature]*pollblkTransactionConfirmerPending)
-	this.observer = observer
 
-	go this.run()
+	go func(confirmer *pollblkTransactionConfirmer) {
+		err := confirmer.run()
+		confirmer.flushPendings(err)
+	}(&this)
 
 	return &this
 }
 
-func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
+func (c *pollblkTransactionConfirmer) prepare(iact core.Interaction) (transactionConfirmerHandle, error) {
 	tx := iact.Payload().(transaction)
 
 	stx, err := tx.getTx()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	hash := &stx.Signatures[0]
@@ -149,46 +232,49 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 		iact:    iact,
 	}
 
-	this.lock.Lock()
+	c.lock.Lock()
 
 	var done bool
-	if this.pendings == nil {
+	if c.pendings == nil {
 		done = true
 	} else {
-		this.pendings[*hash] = pending
+		c.pendings[*hash] = pending
 		done = false
 	}
 
-	this.lock.Unlock()
+	c.lock.Unlock()
 
 	if done {
 		close(channel)
-		return this.err
-	} else {
-		return <-channel
+		return nil, c.err
 	}
+	return pending, nil
 }
 
-func (this *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
+func (p *pollblkTransactionConfirmerPending) confirm() error {
+	return <-p.channel
+}
+
+func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
 	pendings := make([]*pollblkTransactionConfirmerPending, 0, len(hashes))
 
-	this.lock.Lock()
+	c.lock.Lock()
 
 	for _, hash := range hashes {
-		pending, ok := this.pendings[hash]
+		pending, ok := c.pendings[hash]
 		if !ok {
 			continue
 		}
 
-		delete(this.pendings, hash)
+		delete(c.pendings, hash)
 
 		pendings = append(pendings, pending)
 	}
 
-	this.lock.Unlock()
+	c.lock.Unlock()
 
 	for _, pending := range pendings {
-		this.logger.Tracef("commit transaction %p",
+		c.logger.Tracef("commit transaction %p",
 			pending.iact.Payload())
 		pending.iact.ReportCommit()
 		pending.channel <- nil
@@ -196,22 +282,24 @@ func (this *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature)
 	}
 }
 
-func (this *pollblkTransactionConfirmer) flushPendings(err error) {
+func (c *pollblkTransactionConfirmer) flushPendings(err error) {
 	pendings := make([]*pollblkTransactionConfirmerPending, 0)
 
-	this.lock.Lock()
+	c.lock.Lock()
 
-	for _, pending := range this.pendings {
+	for _, pending := range c.pendings {
 		pendings = append(pendings, pending)
 	}
 
-	this.pendings = nil
-	this.err = err
+	c.pendings = nil
+	c.err = err
 
-	this.lock.Unlock()
+	c.lock.Unlock()
+
+	c.logger.Debugf("flush pendings with %v", err)
 
 	for _, pending := range pendings {
-		this.logger.Tracef("abort transaction %p",
+		c.logger.Tracef("abort transaction %p",
 			pending.iact.Payload())
 		pending.iact.ReportAbort()
 		pending.channel <- err
@@ -219,86 +307,92 @@ func (this *pollblkTransactionConfirmer) flushPendings(err error) {
 	}
 }
 
-func (this *pollblkTransactionConfirmer) processBlock(number uint64) error {
+func (c *pollblkTransactionConfirmer) processBlock(number uint64) error {
 	var block *rpc.GetBlockResult
 	var err error
 
-	this.logger.Tracef("poll new block (number = %d)", number)
+	c.logger.Tracef("poll new block (number = %d)", number)
 
 	includeRewards := false
-	for attempt := 0; attempt < 100; attempt++ {
-		block, err = this.client.GetBlockWithOpts(
-			this.ctx,
+	for {
+		c.logger.Tracef("calling GetBlockWithOpts %v", number)
+		block, err = c.client.GetBlockWithOpts(
+			c.ctx,
 			number,
 			&rpc.GetBlockOpts{
 				TransactionDetails: rpc.TransactionDetailsSignatures,
 				Rewards:            &includeRewards,
-				Commitment:         rpc.CommitmentFinalized,
+				// should be safe as we request blocks for rooted slots
+				Commitment: rpc.CommitmentConfirmed,
 			})
+		c.logger.Tracef("returned from GetBlockWithOpts %v", number)
 
-		if err != nil || block == nil {
+		// rooted slot should be available
+		var rpcerr *jsonrpc.RPCError
+		if errors.As(err, &rpcerr) && rpcerr.Code == -32004 {
+			c.logger.Tracef("GetBlockWithOpts error %v", err)
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
 		break
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("GetBlockWithOpts failed: %w", err)
 	}
 
-	this.observer.updateParameters(&parameters{blockhash: &block.Blockhash})
-
-	if len(block.Signatures) == 0 {
-		return nil
+	if len(block.Signatures) > 0 {
+		c.reportHashes(block.Signatures)
 	}
-
-	this.reportHashes(block.Signatures)
 
 	return nil
 }
 
-func (this *pollblkTransactionConfirmer) run() {
-	params, err := newDirectParameterProvider(this.client, this.ctx).getParams()
+func (c *pollblkTransactionConfirmer) run() error {
+	subscription, err := c.wsClient.RootSubscribe()
 	if err != nil {
-		this.flushPendings(err)
-		return
+		return fmt.Errorf("RootSubscribe failed: %w", err)
 	}
-	this.observer.updateParameters(params)
+	defer subscription.Unsubscribe()
 
-	subcription, err := this.wsClient.RootSubscribe()
-	if err != nil {
-		this.flushPendings(err)
-		return
-	}
+	c.logger.Tracef("subscribe to new head events")
 
-	this.logger.Tracef("subscribe to new head events")
-
-	var currentNumber ws.RootResult = 0
-loop:
+	// slot, err := c.client.GetFirstAvailableBlock(c.ctx)
+	// if err != nil {
+	// 	return fmt.Errorf("GetFirstAvailableBlock failed: %w", err)
+	// }
+	slot := uint64(0)
+	subSlot := slot
 	for {
-		event, err := subcription.Recv()
-		if err != nil {
-			break loop
-		}
-		if event == nil {
-			continue
-		}
-		if *event <= currentNumber {
-			continue
-		} else if *event > currentNumber+1 {
-			for currentNumber+1 < *event {
-				currentNumber++
-				err = this.processBlock(uint64(currentNumber))
+		err := c.processBlock(slot)
+		var rpcerr *jsonrpc.RPCError
+		if errors.As(err, &rpcerr) && rpcerr.Code == -32001 {
+			slot, err = strconv.ParseUint(rpcerr.Message[strings.LastIndex(rpcerr.Message, " ")+1:], 10, 64)
+			if err != nil {
+				return fmt.Errorf("failed to parse slot: %w", err)
 			}
+			c.logger.Tracef("skipping to slot %v", slot)
+			continue
+		} else if errors.Is(err, rpc.ErrNotConfirmed) {
+			c.logger.Tracef("processBlock %v failed with %v, skipping", slot, err)
+		} else if err != nil {
+			return fmt.Errorf("processBlock failed: %w", err)
 		}
-		currentNumber = *event
-		err = this.processBlock(uint64(currentNumber))
-		if err != nil {
-			break loop
+		c.logger.Tracef("processed slot %v", slot)
+		slot++
+
+		for subSlot < slot {
+			event, err := subscription.Recv()
+			if err != nil {
+				return fmt.Errorf("Recv failed: %w", err)
+			}
+			if event == nil {
+				return fmt.Errorf("received nil slot")
+			}
+			cand := uint64(*event)
+			if cand > subSlot {
+				subSlot = cand
+			}
+			c.logger.Tracef("received root slot %v, new slot %v", cand, subSlot)
 		}
 	}
-
-	subcription.Unsubscribe()
-
-	this.flushPendings(err)
 }

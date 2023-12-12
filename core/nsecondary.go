@@ -277,12 +277,12 @@ func (this *runtime) prepare() error {
 		return fmt.Errorf("not implemented prepare message %v", msg)
 	}
 
-	Debugf("numDecoded = %d", numDecoded)
+	// Debugf("numDecoded = %d", numDecoded)
 
 	for numDecoded > 0 {
 		decodeRes = <-decodeChannel
 
-		Debugf("read %v from decode channel", *decodeRes)
+		// Debugf("read %v from decode channel", *decodeRes)
 
 		if decodeRes.err != nil {
 			return decodeRes.err
@@ -338,7 +338,7 @@ func (this *runtime) prepareInteraction(msg *msgPrepareInteraction, decodeChanne
 	go func() {
 		decoded, err = decodeInteraction(client, msg)
 		result := decodeResult{decoded, err}
-		Debugf("write %v on decode channel", result)
+		// Debugf("write %v on decode channel", result)
 		decodeChannel <- &result
 	}()
 

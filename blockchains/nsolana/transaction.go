@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gagliardetto/solana-go"
@@ -426,31 +427,6 @@ type parameterProvider interface {
 	getParams() (*parameters, error)
 }
 
-type parameterObsrever interface {
-	updateParameters(parameters *parameters)
-}
-
-type observerParameterProvider struct {
-	lock       sync.RWMutex
-	parameters *parameters
-}
-
-func newObserverParameterProvider() *observerParameterProvider {
-	return &observerParameterProvider{}
-}
-
-func (this *observerParameterProvider) updateParameters(parameters *parameters) {
-	this.lock.Lock()
-	defer this.lock.Unlock()
-	this.parameters = parameters
-}
-
-func (this *observerParameterProvider) getParams() (*parameters, error) {
-	this.lock.RLock()
-	defer this.lock.RUnlock()
-	return this.parameters, nil
-}
-
 type directParameterProvider struct {
 	client *rpc.Client
 	ctx    context.Context
@@ -466,7 +442,7 @@ func newDirectParameterProvider(client *rpc.Client, ctx context.Context) *direct
 func (this *directParameterProvider) getParams() (*parameters, error) {
 	var params parameters
 
-	blockhash, err := this.client.GetRecentBlockhash(this.ctx, rpc.CommitmentFinalized)
+	blockhash, err := this.client.GetLatestBlockhash(this.ctx, rpc.CommitmentFinalized)
 	if err != nil {
 		return nil, err
 	}
@@ -474,4 +450,52 @@ func (this *directParameterProvider) getParams() (*parameters, error) {
 	params.blockhash = &blockhash.Value.Blockhash
 
 	return &params, nil
+}
+
+type cachedParameterProvider struct {
+	params   *parameters
+	lock     sync.RWMutex
+	provider parameterProvider
+}
+
+func newCachedParameterProvider(params *parameters, provider parameterProvider) *cachedParameterProvider {
+	p := cachedParameterProvider{
+		params:   params,
+		provider: provider,
+	}
+
+	go p.run()
+
+	return &p
+}
+
+func (p *cachedParameterProvider) getParams() (*parameters, error) {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	return p.params, nil
+}
+
+func (p *cachedParameterProvider) run() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			for {
+				current, err := p.getParams()
+				params, err := p.provider.getParams()
+				if err != nil {
+					return
+				}
+				if !current.blockhash.Equals(*params.blockhash) {
+					p.lock.Lock()
+					p.params = params
+					p.lock.Unlock()
+					break
+				}
+				time.Sleep(default_ms_per_slot / 2)
+			}
+		}
+	}
 }

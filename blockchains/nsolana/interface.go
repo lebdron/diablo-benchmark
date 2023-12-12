@@ -142,8 +142,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 		return nil, err
 	}
 
-	observerProvider := newObserverParameterProvider()
-	confirmer := newPollblkTransactionConfirmer(logger, client, sock, ctx, observerProvider)
+	confirmer := newPollblkTransactionConfirmer(logger, client, sock, ctx)
 
 	var provider parameterProvider
 	var preparer transactionPreparer
@@ -151,7 +150,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 		if key == "prepare" {
 			logger.Tracef("use prepare method '%s'", value)
 			provider, preparer, err =
-				parsePrepare(value, logger, client, ctx, observerProvider)
+				parsePrepare(value, logger, client, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -162,9 +161,14 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	}
 
 	if (provider == nil) && (preparer == nil) {
-		logger.Tracef("use default prepare method 'observer'")
+		logger.Tracef("use default prepare method 'cached'")
 
-		provider = observerProvider
+		directProvider := newDirectParameterProvider(client, ctx)
+		params, err := directProvider.getParams()
+		if err != nil {
+			return nil, err
+		}
+		provider = newCachedParameterProvider(params, directProvider)
 
 		preparer = newNothingTransactionPreparer()
 	}
@@ -172,22 +176,24 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	return newClient(logger, client, provider, preparer, confirmer), nil
 }
 
-func parsePrepare(value string, logger core.Logger, client *rpc.Client, ctx context.Context, observerProvider *observerParameterProvider) (parameterProvider, transactionPreparer, error) {
-	var preparer transactionPreparer
-	var provider parameterProvider
-
+func parsePrepare(value string, logger core.Logger, client *rpc.Client, ctx context.Context) (parameterProvider, transactionPreparer, error) {
 	if value == "nothing" {
-		provider = newDirectParameterProvider(client, ctx)
+		provider := newDirectParameterProvider(client, ctx)
 
-		preparer = newNothingTransactionPreparer()
+		preparer := newNothingTransactionPreparer()
 
 		return provider, preparer, nil
 	}
 
-	if value == "observer" {
-		provider = observerProvider
+	if value == "cached" {
+		directProvider := newDirectParameterProvider(client, ctx)
+		params, err := directProvider.getParams()
+		if err != nil {
+			return nil, nil, err
+		}
+		provider := newCachedParameterProvider(params, directProvider)
 
-		preparer = newNothingTransactionPreparer()
+		preparer := newNothingTransactionPreparer()
 
 		return provider, preparer, nil
 	}
