@@ -365,10 +365,14 @@ func (c *pollblkTransactionConfirmer) run() error {
 	for {
 		err := c.processBlock(slot)
 		var rpcerr *jsonrpc.RPCError
-		if errors.As(err, &rpcerr) && rpcerr.Code == -32001 {
-			slot, err = strconv.ParseUint(rpcerr.Message[strings.LastIndex(rpcerr.Message, " ")+1:], 10, 64)
-			if err != nil {
-				return fmt.Errorf("failed to parse slot: %w", err)
+		if errors.As(err, &rpcerr) && (rpcerr.Code == -32001 || rpcerr.Code == -32007) {
+			if rpcerr.Code == -32001 {
+				slot, err = strconv.ParseUint(rpcerr.Message[strings.LastIndex(rpcerr.Message, " ")+1:], 10, 64)
+				if err != nil {
+					return fmt.Errorf("failed to parse slot: %w", err)
+				}
+			} else if rpcerr.Code == -32007 {
+				slot += 1
 			}
 			c.logger.Tracef("skipping to slot %v", slot)
 			continue
