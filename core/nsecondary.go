@@ -154,6 +154,10 @@ func (this *runtime) run() error {
 		go interaction.trigger()
 	}
 
+	timeout := 20 * time.Second
+	Infof("sleep for %v seconds", timeout)
+	time.Sleep(timeout)
+
 	Infof("stop benchmark")
 	return this.stop()
 }

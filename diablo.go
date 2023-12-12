@@ -59,28 +59,27 @@ func printResult(dest io.Writer, result *core.Result) {
 
 func printStat(result *core.Result) {
 	var latencies []float64 = make([]float64, 0)
-	var latency, sumLatencies, lastTime float64
 	var secondary *core.SecondaryResult
 	var iact *core.InteractionResult
-	var numSubmitted, numAborted int
 	var client *core.ClientResult
 
-	numSubmitted = 0
-	numAborted = 0
-	sumLatencies = 0
-	lastTime = 0
+	numSubmitted := 0
+	numAborted := 0
+	sumLatencies := .0
+	lastSubmitTime := .0
+	lastFinalTime := .0
 
 	for _, secondary = range result.Locations {
 		for _, client = range secondary.Clients {
 			for _, iact = range client.Interactions {
-				if iact.SubmitTime > lastTime {
-					lastTime = iact.SubmitTime
+				if iact.SubmitTime > lastSubmitTime {
+					lastSubmitTime = iact.SubmitTime
 				}
-				if iact.CommitTime > lastTime {
-					lastTime = iact.CommitTime
+				if iact.CommitTime > lastFinalTime {
+					lastFinalTime = iact.CommitTime
 				}
-				if iact.AbortTime > lastTime {
-					lastTime = iact.AbortTime
+				if iact.AbortTime > lastFinalTime {
+					lastFinalTime = iact.AbortTime
 				}
 
 				if iact.SubmitTime < 0 {
@@ -98,7 +97,7 @@ func printStat(result *core.Result) {
 					continue
 				}
 
-				latency = iact.CommitTime - iact.SubmitTime
+				latency := iact.CommitTime - iact.SubmitTime
 				latencies = append(latencies, latency)
 				sumLatencies += latency
 			}
@@ -109,14 +108,14 @@ func printStat(result *core.Result) {
 	fmt.Printf("commit number: %d tx\n", len(latencies))
 	fmt.Printf("abort number: %d tx\n", numAborted)
 
-	if lastTime <= 0 {
+	if lastSubmitTime <= 0 {
 		fmt.Printf("average load: -\n")
 	} else {
 		fmt.Printf("average load: %.1f tx/s\n",
-			float64(numSubmitted)/lastTime)
+			float64(numSubmitted)/lastSubmitTime)
 	}
 
-	if (len(latencies) == 0) || (lastTime <= 0) {
+	if (len(latencies) == 0) || (lastFinalTime <= 0) {
 		fmt.Printf("average throughput: -\n")
 		fmt.Printf("average latency: -\n")
 		fmt.Printf("median latency: -\n")
@@ -126,7 +125,7 @@ func printStat(result *core.Result) {
 	sort.Float64s(latencies)
 
 	fmt.Printf("average throughput: %.1f tx/s\n",
-		float64(len(latencies))/lastTime)
+		float64(len(latencies))/lastFinalTime)
 	fmt.Printf("average latency: %.3f s\n",
 		sumLatencies/float64(len(latencies)))
 	fmt.Printf("median latency: %.3f s\n", latencies[len(latencies)/2])
