@@ -210,7 +210,7 @@ func (this *transferTransaction) getTx() (virtualTransaction, *types.Transaction
 	}
 
 	tx = types.NewTransaction(nonce, this.to,
-		big.NewInt(int64(this.amount)), params.gasLimit,
+		big.NewInt(int64(this.amount)), 21_000,
 		params.gasPrice, []byte{})
 
 	return newUnsignedTransaction(params.chainId, tx,
@@ -390,7 +390,6 @@ func newStaticNonceManager(logger core.Logger, client *ethclient.Client) *static
 }
 
 // Return the optimisticNonce locked.
-//
 func (this *staticNonceManager) getNonce(from common.Address) (*staticNonce, error) {
 	var key string = from.String()
 	var ret *staticNonce
