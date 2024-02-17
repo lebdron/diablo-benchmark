@@ -14,6 +14,7 @@ import (
 
 	"github.com/ava-labs/coreth/core/types"
 	"github.com/ava-labs/coreth/ethclient"
+	"github.com/ava-labs/coreth/params"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
@@ -22,7 +23,13 @@ const (
 	transaction_type_transfer uint8 = 0
 	transaction_type_invoke   uint8 = 1
 
+	transfer_gas_limit    uint64 = 21_000
 	transaction_gas_limit uint64 = 2_000_000
+)
+
+var (
+	transfer_max_gas_fee_cap = new(big.Int).Quo(new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether)), big.NewInt(int64(transfer_gas_limit)))
+	// max_gas_tip_cap          = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
 )
 
 type transaction interface {
@@ -216,8 +223,8 @@ func (this *transferTransaction) getTx() (virtualTransaction, *types.Transaction
 		ChainID:   params.chainId,
 		Nonce:     nonce,
 		GasTipCap: params.maxPriorityFeePerGas,
-		GasFeeCap: big.NewInt(1_000_000_000_000_000),
-		Gas:       21_000,
+		GasFeeCap: transfer_max_gas_fee_cap,
+		Gas:       transfer_gas_limit,
 		To:        this.to,
 		Value:     big.NewInt(int64(this.amount)),
 		Data:      []byte{},
