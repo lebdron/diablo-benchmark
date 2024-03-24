@@ -8,6 +8,8 @@ import (
 
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/common/models"
+	"github.com/algorand/go-algorand-sdk/v2/crypto"
+	"github.com/algorand/go-algorand-sdk/v2/types"
 
 	"golang.org/x/crypto/ed25519"
 )
@@ -117,8 +119,33 @@ func (this *BlockchainBuilder) CreateAccount(int) (interface{}, error) {
 		ret = &this.premadeAccounts[this.usedAccounts]
 		this.usedAccounts += 1
 	} else {
-		return nil, fmt.Errorf("can only use %d premade accounts",
-			this.usedAccounts)
+		acc := crypto.GenerateAccount()
+
+		from, err := this.getBuilderAccount()
+		if err != nil {
+			return nil, err
+		}
+
+		tx := newTransferTransaction(uint64(this.nextTxuid), uint64(types.ToMicroAlgos(1_000_000)), from.address,
+			acc.Address.String(), from.key, this.provider)
+
+		_, raw, err := tx.getRaw()
+		if err != nil {
+			return nil, err
+		}
+
+		this.logger.Tracef("fund new account '%s'", acc.Address)
+
+		_, err = this.submitTransaction(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		this.nextTxuid += 1
+
+		this.logger.Tracef("new account '%s' funded", acc.Address)
+
+		return &account{address: acc.Address.String(), key: acc.PrivateKey}, nil
 	}
 
 	return ret, nil
