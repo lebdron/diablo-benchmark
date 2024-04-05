@@ -8,6 +8,7 @@ import (
 	"diablo-benchmark/blockchains/navalanche"
 	"diablo-benchmark/blockchains/ndiem"
 	"diablo-benchmark/blockchains/nethereum"
+	"diablo-benchmark/blockchains/nredundant"
 	"diablo-benchmark/blockchains/nsolana"
 	"diablo-benchmark/core"
 	"encoding/json"
@@ -39,13 +40,13 @@ const (
 
 func buildSystemMap() map[string]core.BlockchainInterface {
 	return map[string]core.BlockchainInterface{
-		"algorand":  &nalgorand.BlockchainInterface{},
-		"avalanche": &navalanche.BlockchainInterface{},
-		"aptos":     &naptos.BlockchainInterface{},
-		"diem":      &ndiem.BlockchainInterface{},
-		"ethereum":  &nethereum.BlockchainInterface{},
-		"solana":    &nsolana.BlockchainInterface{},
-		"mock":      &mock.BlockchainInterface{},
+		"algorand":  nredundant.NewInterface(&nalgorand.BlockchainInterface{}),
+		"avalanche": nredundant.NewInterface(&navalanche.BlockchainInterface{}),
+		"aptos":     nredundant.NewInterface(&naptos.BlockchainInterface{}),
+		"diem":      nredundant.NewInterface(&ndiem.BlockchainInterface{}),
+		"ethereum":  nredundant.NewInterface(&nethereum.BlockchainInterface{}),
+		"solana":    nredundant.NewInterface(&nsolana.BlockchainInterface{}),
+		"mock":      nredundant.NewInterface(&mock.BlockchainInterface{}),
 	}
 }
 
