@@ -36,6 +36,22 @@ type transaction interface {
 	getTx() (*types.Transaction, error)
 }
 
+type lazyTransaction struct {
+	getTxOnce func() (*types.Transaction, error)
+}
+
+func newLazyTransaction(inner transaction) *lazyTransaction {
+	return &lazyTransaction{
+		getTxOnce: sync.OnceValues(func() (*types.Transaction, error) {
+			return inner.getTx()
+		}),
+	}
+}
+
+func (lt *lazyTransaction) getTx() (*types.Transaction, error) {
+	return lt.getTxOnce()
+}
+
 type outerTransaction struct {
 	inner virtualTransaction
 }
@@ -55,7 +71,7 @@ func (this *outerTransaction) getTx() (*types.Transaction, error) {
 	return tx, nil
 }
 
-func decodeTransaction(src io.Reader, manager nonceManager, provider parameterProvider) (*outerTransaction, error) {
+func decodeTransaction(src io.Reader, manager nonceManager, provider parameterProvider) (transaction, error) {
 	var inner virtualTransaction
 	var txtype uint8
 	var err error
@@ -81,7 +97,7 @@ func decodeTransaction(src io.Reader, manager nonceManager, provider parameterPr
 		return nil, err
 	}
 
-	return &outerTransaction{inner}, nil
+	return newLazyTransaction(&outerTransaction{inner}), nil
 }
 
 type virtualTransaction interface {
