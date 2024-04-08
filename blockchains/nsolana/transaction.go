@@ -27,6 +27,22 @@ type transaction interface {
 	getTx() (*solana.Transaction, error)
 }
 
+type lazyTransaction struct {
+	getTxOnce func() (*solana.Transaction, error)
+}
+
+func newLazyTransaction(inner transaction) *lazyTransaction {
+	return &lazyTransaction{
+		getTxOnce: sync.OnceValues(func() (*solana.Transaction, error) {
+			return inner.getTx()
+		}),
+	}
+}
+
+func (lt *lazyTransaction) getTx() (*solana.Transaction, error) {
+	return lt.getTxOnce()
+}
+
 type outerTransaction struct {
 	inner virtualTransaction
 }
@@ -42,7 +58,7 @@ func (this *outerTransaction) getTx() (*solana.Transaction, error) {
 	return tx, nil
 }
 
-func decodeTransaction(src io.Reader, provider parameterProvider) (*outerTransaction, error) {
+func decodeTransaction(src io.Reader, provider parameterProvider) (transaction, error) {
 	var txtype uint8
 	err := util.NewMonadInputReader(src).
 		SetOrder(binary.LittleEndian).
@@ -66,7 +82,7 @@ func decodeTransaction(src io.Reader, provider parameterProvider) (*outerTransac
 		return nil, err
 	}
 
-	return &outerTransaction{inner}, nil
+	return newLazyTransaction(&outerTransaction{inner}), nil
 }
 
 type virtualTransaction interface {
