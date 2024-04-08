@@ -35,12 +35,12 @@ package nalgorand
 
 import (
 	"context"
+	"crypto/ed25519"
 	"diablo-benchmark/core"
 	"fmt"
 	"os"
 	"strings"
 
-	"golang.org/x/crypto/ed25519"
 	"gopkg.in/yaml.v3"
 
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"

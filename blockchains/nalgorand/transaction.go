@@ -2,17 +2,17 @@ package nalgorand
 
 import (
 	"context"
+	"crypto/ed25519"
 	"diablo-benchmark/util"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
 	"github.com/algorand/go-algorand-sdk/v2/crypto"
 	algotx "github.com/algorand/go-algorand-sdk/v2/transaction"
 	"github.com/algorand/go-algorand-sdk/v2/types"
-
-	"golang.org/x/crypto/ed25519"
 )
 
 const (
@@ -23,6 +23,30 @@ const (
 type transaction interface {
 	getRaw() ([]byte, error)
 	getUid() uint64
+}
+
+type lazyTransaction struct {
+	getRawOnce func() ([]byte, error)
+	getUidOnce func() uint64
+}
+
+func newLazyTransaction(inner transaction) *lazyTransaction {
+	return &lazyTransaction{
+		getRawOnce: sync.OnceValues(func() ([]byte, error) {
+			return inner.getRaw()
+		}),
+		getUidOnce: sync.OnceValue(func() uint64 {
+			return inner.getUid()
+		}),
+	}
+}
+
+func (lt *lazyTransaction) getRaw() ([]byte, error) {
+	return lt.getRawOnce()
+}
+
+func (lt *lazyTransaction) getUid() uint64 {
+	return lt.getUidOnce()
 }
 
 func uidToNote(uid uint64) []byte {
@@ -87,7 +111,7 @@ func decodeTransaction(src io.Reader, provider parameterProvider) (transaction, 
 		return nil, err
 	}
 
-	return &outerTransaction{inner}, nil
+	return newLazyTransaction(&outerTransaction{inner}), nil
 }
 
 type virtualTransaction interface {

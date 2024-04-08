@@ -3,6 +3,7 @@ package nalgorand
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"diablo-benchmark/core"
 	"fmt"
 
@@ -10,8 +11,6 @@ import (
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/common/models"
 	"github.com/algorand/go-algorand-sdk/v2/crypto"
 	"github.com/algorand/go-algorand-sdk/v2/types"
-
-	"golang.org/x/crypto/ed25519"
 )
 
 type BlockchainBuilder struct {
