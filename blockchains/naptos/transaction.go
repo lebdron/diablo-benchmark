@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	aptosmodels "github.com/portto/aptos-go-sdk/models"
@@ -55,6 +56,30 @@ type transaction interface {
 	getName() string
 }
 
+type lazyTransaction struct {
+	getSignedOnce func() (*aptosmodels.UserTransaction, error)
+	getNameOnce   func() string
+}
+
+func newLazyTransaction(inner transaction) *lazyTransaction {
+	return &lazyTransaction{
+		getSignedOnce: sync.OnceValues(func() (*aptosmodels.UserTransaction, error) {
+			return inner.getSigned()
+		}),
+		getNameOnce: sync.OnceValue(func() string {
+			return inner.getName()
+		}),
+	}
+}
+
+func (lt *lazyTransaction) getSigned() (*aptosmodels.UserTransaction, error) {
+	return lt.getSignedOnce()
+}
+
+func (lt *lazyTransaction) getName() string {
+	return lt.getNameOnce()
+}
+
 type outerTransaction struct {
 	inner virtualTransaction
 }
@@ -71,7 +96,7 @@ func (t *outerTransaction) getName() string {
 	return t.inner.getName()
 }
 
-func decodeTransaction(src io.Reader) (*outerTransaction, error) {
+func decodeTransaction(src io.Reader) (transaction, error) {
 	var inner virtualTransaction
 	var txtype uint8
 	var err error
@@ -97,7 +122,7 @@ func decodeTransaction(src io.Reader) (*outerTransaction, error) {
 		return nil, err
 	}
 
-	return &outerTransaction{inner}, nil
+	return newLazyTransaction(&outerTransaction{inner}), nil
 }
 
 type virtualTransaction interface {
