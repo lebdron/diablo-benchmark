@@ -83,7 +83,11 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 			SkipPreflight:       false,
 			PreflightCommitment: this.commitment,
 		})
-	if err != nil {
+	isBlockhashNotFound := func(err error) bool {
+		rpcerr, ok := err.(*jsonrpc.RPCError)
+		return ok && rpcerr.Code == -32002 && strings.Contains(rpcerr.Message, "Blockhash not found")
+	}
+	if err != nil && !isBlockhashNotFound(err) {
 		iact.ReportAbort()
 		this.logger.Debugf("transaction aborted: %v", err)
 		return err
@@ -183,13 +187,14 @@ func (c *subtxTransactionConfirmer) prepare(iact core.Interaction) (transactionC
 }
 
 type pollblkTransactionConfirmer struct {
-	logger   core.Logger
-	client   *rpc.Client
-	wsClient *ws.Client
-	ctx      context.Context
-	err      error
-	lock     sync.Mutex
-	pendings map[solana.Signature]*pollblkTransactionConfirmerPending
+	logger    core.Logger
+	client    *rpc.Client
+	wsClient  *ws.Client
+	ctx       context.Context
+	err       error
+	lock      sync.Mutex
+	pendings  map[solana.Signature]*pollblkTransactionConfirmerPending
+	committed map[solana.Signature]struct{}
 }
 
 type pollblkTransactionConfirmerPending struct {
@@ -206,6 +211,7 @@ func newPollblkTransactionConfirmer(logger core.Logger, client *rpc.Client, wsCl
 	this.ctx = ctx
 	this.err = nil
 	this.pendings = make(map[solana.Signature]*pollblkTransactionConfirmerPending)
+	this.committed = make(map[solana.Signature]struct{})
 
 	go func(confirmer *pollblkTransactionConfirmer) {
 		err := confirmer.run()
@@ -234,12 +240,16 @@ func (c *pollblkTransactionConfirmer) prepare(iact core.Interaction) (transactio
 
 	c.lock.Lock()
 
-	var done bool
+	done := false
 	if c.pendings == nil {
 		done = true
+	} else if _, ok := c.committed[*hash]; ok {
+		delete(c.committed, *hash)
+		iact.ReportCommit()
+		channel <- nil
+		close(channel)
 	} else {
 		c.pendings[*hash] = pending
-		done = false
 	}
 
 	c.lock.Unlock()
@@ -263,6 +273,7 @@ func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
 	for _, hash := range hashes {
 		pending, ok := c.pendings[hash]
 		if !ok {
+			c.committed[hash] = struct{}{}
 			continue
 		}
 

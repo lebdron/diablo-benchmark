@@ -1,11 +1,11 @@
 package nethereum
 
-
 import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
 	"math/big"
+	"strings"
 	"sync"
 
 	"github.com/ethereum/go-ethereum"
@@ -13,23 +13,22 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-
 type BlockchainClient struct {
-	logger     core.Logger
-	client     *ethclient.Client
-	manager    nonceManager
-	provider   parameterProvider
-	preparer   transactionPreparer
-	confirmer  transactionConfirmer
+	logger    core.Logger
+	client    *ethclient.Client
+	manager   nonceManager
+	provider  parameterProvider
+	preparer  transactionPreparer
+	confirmer transactionConfirmer
 }
 
 func newClient(logger core.Logger, client *ethclient.Client, manager nonceManager, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
 	return &BlockchainClient{
-		logger: logger,
-		client: client,
-		manager: manager,
-		provider: provider,
-		preparer: preparer,
+		logger:    logger,
+		client:    client,
+		manager:   manager,
+		provider:  provider,
+		preparer:  preparer,
 		confirmer: confirmer,
 	}
 }
@@ -73,14 +72,13 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 	iact.ReportSubmit()
 
 	err = this.client.SendTransaction(context.Background(), stx)
-	if err != nil {
+	if err != nil && !strings.Contains("already known", err.Error()) {
 		iact.ReportAbort()
 		return err
 	}
 
 	return this.confirmer.confirm(iact)
 }
-
 
 type transactionPreparer interface {
 	prepare(transaction) error
@@ -98,7 +96,7 @@ func (this *nothingTransactionPreparer) prepare(transaction) error {
 }
 
 type signatureTransactionPreparer struct {
-	logger  core.Logger
+	logger core.Logger
 }
 
 func newSignatureTransactionPreparer(logger core.Logger) transactionPreparer {
@@ -118,7 +116,6 @@ func (this *signatureTransactionPreparer) prepare(tx transaction) error {
 	return nil
 }
 
-
 type transactionConfirmer interface {
 	confirm(core.Interaction) error
 }
@@ -130,11 +127,12 @@ type pollblkTransactionConfirmer struct {
 	err       error
 	lock      sync.Mutex
 	pendings  map[string]*pollblkTransactionConfirmerPending
+	committed map[string]struct{}
 }
 
 type pollblkTransactionConfirmerPending struct {
-	channel  chan<- error
-	iact     core.Interaction
+	channel chan<- error
+	iact    core.Interaction
 }
 
 func newPollblkTransactionConfirmer(logger core.Logger, client *ethclient.Client, ctx context.Context) *pollblkTransactionConfirmer {
@@ -145,6 +143,7 @@ func newPollblkTransactionConfirmer(logger core.Logger, client *ethclient.Client
 	this.ctx = ctx
 	this.err = nil
 	this.pendings = make(map[string]*pollblkTransactionConfirmerPending)
+	this.committed = make(map[string]struct{})
 
 	go this.run()
 
@@ -157,7 +156,6 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 	var stx *types.Transaction
 	var channel chan error
 	var hash string
-	var done bool
 	var err error
 
 	stx, err = tx.getTx()
@@ -171,16 +169,21 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 
 	pending = &pollblkTransactionConfirmerPending{
 		channel: channel,
-		iact: iact,
+		iact:    iact,
 	}
 
 	this.lock.Lock()
 
+	done := false
 	if this.pendings == nil {
 		done = true
+	} else if _, ok := this.committed[hash]; ok {
+		delete(this.committed, hash)
+		iact.ReportCommit()
+		channel <- nil
+		close(channel)
 	} else {
 		this.pendings[hash] = pending
-		done = false
 	}
 
 	this.lock.Unlock()
@@ -189,7 +192,7 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 		close(channel)
 		return this.err
 	} else {
-		return <- channel
+		return <-channel
 	}
 }
 
@@ -206,6 +209,7 @@ func (this *pollblkTransactionConfirmer) reportHashes(hashes []string) {
 	for _, hash = range hashes {
 		pending, ok = this.pendings[hash]
 		if !ok {
+			this.committed[hash] = struct{}{}
 			continue
 		}
 
@@ -298,16 +302,17 @@ func (this *pollblkTransactionConfirmer) run() {
 
 	this.logger.Tracef("subscribe to new head events")
 
-	loop: for {
+loop:
+	for {
 		select {
-		case event = <- events:
+		case event = <-events:
 			err = this.processBlock(event.Number)
 			if err != nil {
 				break loop
 			}
-		case err = <- subcription.Err():
+		case err = <-subcription.Err():
 			break loop
-		case <- this.ctx.Done():
+		case <-this.ctx.Done():
 			err = this.ctx.Err()
 			break loop
 		}

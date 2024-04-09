@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
+	"strings"
 	"sync"
 
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/common"
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/common/models"
 	"github.com/algorand/go-algorand-sdk/v2/types"
 )
@@ -70,6 +72,10 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 
 	txid, err = this.client.SendRawTransaction(raw).Do(context.Background())
 	if err != nil {
+		if httperr, ok := err.(common.BadRequest); ok && strings.Contains(httperr.Error(), "transaction already in ledger") {
+			iact.ReportCommit()
+			return nil
+		}
 		iact.ReportAbort()
 		return err
 	}
@@ -194,12 +200,13 @@ func (this *polltxTransactionConfirmer) waitNextRound(round *uint64) error {
 }
 
 type pollblkTransactionConfirmer struct {
-	logger   core.Logger
-	client   *algod.Client
-	ctx      context.Context
-	err      error
-	lock     sync.Mutex
-	pendings map[uint64]*pollblkTransactionConfirmerPending
+	logger    core.Logger
+	client    *algod.Client
+	ctx       context.Context
+	err       error
+	lock      sync.Mutex
+	pendings  map[uint64]*pollblkTransactionConfirmerPending
+	committed map[uint64]struct{}
 }
 
 type pollblkTransactionConfirmerPending struct {
@@ -215,6 +222,7 @@ func newPollblkTransactionConfirmer(logger core.Logger, client *algod.Client, ct
 	this.ctx = ctx
 	this.err = nil
 	this.pendings = make(map[uint64]*pollblkTransactionConfirmerPending)
+	this.committed = make(map[uint64]struct{})
 
 	go this.run()
 
@@ -225,10 +233,8 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction, txid str
 	var tx transaction = iact.Payload().(transaction)
 	var pending *pollblkTransactionConfirmerPending
 	var uid uint64 = tx.getUid()
-	var channel chan error
-	var done bool
 
-	channel = make(chan error)
+	channel := make(chan error)
 
 	pending = &pollblkTransactionConfirmerPending{
 		channel: channel,
@@ -237,11 +243,16 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction, txid str
 
 	this.lock.Lock()
 
+	done := false
 	if this.pendings == nil {
 		done = true
+	} else if _, ok := this.committed[uid]; ok {
+		delete(this.committed, uid)
+		iact.ReportCommit()
+		channel <- nil
+		close(channel)
 	} else {
 		this.pendings[uid] = pending
-		done = false
 	}
 
 	this.lock.Unlock()
@@ -284,6 +295,7 @@ func (this *pollblkTransactionConfirmer) reportTransactions(uids []uint64) {
 	for _, uid = range uids {
 		pending, ok = this.pendings[uid]
 		if !ok {
+			this.committed[uid] = struct{}{}
 			continue
 		}
 

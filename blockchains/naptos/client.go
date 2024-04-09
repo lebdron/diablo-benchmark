@@ -219,12 +219,13 @@ func (c *polltxTransactionConfirmer) confirm(iact core.Interaction) error {
 }
 
 type pollblkTransactionConfirmer struct {
-	logger   core.Logger
-	client   aptosclient.AptosClient
-	ctx      context.Context
-	err      error
-	lock     sync.Mutex
-	pendings map[pollblkTransactionConfirmerKey]*pollblkTransactionConfirmerPending
+	logger    core.Logger
+	client    aptosclient.AptosClient
+	ctx       context.Context
+	err       error
+	lock      sync.Mutex
+	pendings  map[pollblkTransactionConfirmerKey]*pollblkTransactionConfirmerPending
+	committed map[pollblkTransactionConfirmerKey]struct{}
 }
 
 type pollblkTransactionConfirmerKey struct {
@@ -245,6 +246,7 @@ func newPollblkTransactionConfirmer(logger core.Logger, client aptosclient.Aptos
 	this.ctx = context.Background()
 	this.err = nil
 	this.pendings = make(map[pollblkTransactionConfirmerKey]*pollblkTransactionConfirmerPending)
+	this.committed = make(map[pollblkTransactionConfirmerKey]struct{})
 
 	go this.run()
 
@@ -269,6 +271,13 @@ func (c *pollblkTransactionConfirmer) prepare(iact core.Interaction) {
 	}
 
 	c.lock.Lock()
+
+	if _, ok := c.committed[key]; ok {
+		delete(c.committed, key)
+		iact.ReportCommit()
+		channel <- nil
+		close(channel)
+	}
 
 	if c.pendings != nil {
 		c.pendings[key] = value
@@ -325,6 +334,8 @@ func (c *pollblkTransactionConfirmer) parseTransaction(tx *aptosclient.Transacti
 	pending, ok := c.pendings[key]
 	if ok {
 		delete(c.pendings, key)
+	} else {
+		c.committed[key] = struct{}{}
 	}
 
 	c.lock.Unlock()

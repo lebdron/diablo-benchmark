@@ -5,6 +5,7 @@ import (
 	"context"
 	"diablo-benchmark/core"
 	"math/big"
+	"strings"
 	"sync"
 
 	"github.com/ava-labs/coreth/core/types"
@@ -71,8 +72,8 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 	iact.ReportSubmit()
 
 	err = this.client.SendTransaction(context.Background(), stx)
-	if err != nil {
-		core.Tracef("nalgorand::BlockchainClient::TriggerInteraction error '%v'", err)
+	if err != nil && !strings.Contains("already known", err.Error()) {
+		core.Tracef("navalanche::BlockchainClient::TriggerInteraction error '%v'", err)
 		iact.ReportAbort()
 		return err
 	}
@@ -121,12 +122,13 @@ type transactionConfirmer interface {
 }
 
 type pollblkTransactionConfirmer struct {
-	logger   core.Logger
-	client   ethclient.Client
-	ctx      context.Context
-	err      error
-	lock     sync.Mutex
-	pendings map[string]*pollblkTransactionConfirmerPending
+	logger    core.Logger
+	client    ethclient.Client
+	ctx       context.Context
+	err       error
+	lock      sync.Mutex
+	pendings  map[string]*pollblkTransactionConfirmerPending
+	committed map[string]struct{}
 }
 
 type pollblkTransactionConfirmerPending struct {
@@ -142,6 +144,7 @@ func newPollblkTransactionConfirmer(logger core.Logger, client ethclient.Client,
 	this.ctx = ctx
 	this.err = nil
 	this.pendings = make(map[string]*pollblkTransactionConfirmerPending)
+	this.committed = make(map[string]struct{})
 
 	go this.run()
 
@@ -154,7 +157,6 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 	var stx *types.Transaction
 	var channel chan error
 	var hash string
-	var done bool
 	var err error
 
 	stx, err = tx.getTx()
@@ -173,11 +175,16 @@ func (this *pollblkTransactionConfirmer) confirm(iact core.Interaction) error {
 
 	this.lock.Lock()
 
+	done := false
 	if this.pendings == nil {
 		done = true
+	} else if _, ok := this.committed[hash]; ok {
+		delete(this.committed, hash)
+		iact.ReportCommit()
+		channel <- nil
+		close(channel)
 	} else {
 		this.pendings[hash] = pending
-		done = false
 	}
 
 	this.lock.Unlock()
@@ -198,6 +205,7 @@ func (this *pollblkTransactionConfirmer) reportHashes(hashes []string) {
 	for _, hash := range hashes {
 		pending, ok := this.pendings[hash]
 		if !ok {
+			this.committed[hash] = struct{}{}
 			continue
 		}
 
