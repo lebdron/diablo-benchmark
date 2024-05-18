@@ -1,23 +1,44 @@
 package core
 
-
 import (
 	"fmt"
-	"regexp"
+	"math"
 	"math/rand"
+	"regexp"
 )
 
+func isClose(a, b, relTol, absTol float64) (bool, error) {
+	Debugf("a %v, b %v", a, b)
+	if relTol < 0.0 || absTol < 0.0 {
+		return false, fmt.Errorf("tolerances must be non-negative")
+	}
+
+	if a == b {
+		return true, nil
+	}
+
+	if math.IsInf(a, 0) || math.IsInf(b, 0) {
+		return false, nil
+	}
+
+	diff := math.Abs(b - a)
+	Debugf("diff %v", diff)
+
+	return (((diff <= math.Abs(relTol*b)) ||
+		(diff <= math.Abs(relTol*a))) ||
+		(diff <= absTol)), nil
+}
 
 type intSample struct {
-	offset  int
-	size    int
+	offset int
+	size   int
 }
 
 func newIntSample(from, to int) *intSample {
 	if to < from {
-		return &intSample{ offset: from, size: 0 }
+		return &intSample{offset: from, size: 0}
 	} else {
-		return &intSample{ offset: from, size: to - from + 1 }
+		return &intSample{offset: from, size: to - from + 1}
 	}
 }
 
@@ -57,26 +78,24 @@ func (this *intSampleFactory) Instance(expr BenchmarkExpression) (Sample, error)
 	return newIntSample(from, to), nil
 }
 
-
 type floatSample struct {
 	offset     int
 	size       int
-	precision  float64
+	multiplier int
 }
 
-func newFloatSample(from, to, precision float64) *floatSample {
+func newFloatSample(from, to float64, multiplier int) *floatSample {
+	ret := &floatSample{multiplier: multiplier}
+
 	if to < from {
-		return &floatSample{
-			offset: int(from),
-			size: 0,
-			precision: precision, }
+		ret.offset = int(from)
+		ret.size = 0
 	} else {
-		return &floatSample{
-			offset: int(from / precision),
-			size: int((to - from) / precision),
-			precision: precision,
-		}
+		ret.offset = int(from * float64(multiplier))
+		ret.size = int(to*float64(multiplier)) - int(from*float64(multiplier))
 	}
+
+	return ret
 }
 
 func (this *floatSample) Size() int {
@@ -84,13 +103,12 @@ func (this *floatSample) Size() int {
 }
 
 func (this *floatSample) GetFloat(index int) float64 {
-	return (float64(this.offset + index) * this.precision)
+	return (float64(this.offset+index) / float64(this.multiplier))
 }
 
 func (this *floatSample) Get(index int) interface{} {
 	return this.GetFloat(index)
 }
-
 
 type floatSampleFactory struct {
 }
@@ -101,6 +119,8 @@ func newFloatSampleFactory() *floatSampleFactory {
 
 func (this *floatSampleFactory) Instance(expr BenchmarkExpression) (Sample, error) {
 	var from, to, precision, tmp float64
+	var multiplier int
+
 	var field BenchmarkExpression
 	var err error
 
@@ -120,24 +140,25 @@ func (this *floatSampleFactory) Instance(expr BenchmarkExpression) (Sample, erro
 		if err != nil {
 			return nil, err
 		}
+		multiplier = int(1 / precision)
 	} else {
-		precision = 1
+		multiplier = 1
 
 		for {
-			if precision == 0 {
-				return nil, fmt.Errorf("%s: failed to " +
+			if multiplier <= 0 {
+				return nil, fmt.Errorf("%s: failed to "+
 					"infer precision", expr.FullPosition())
 			}
 
-			tmp = from / precision
-			if float64(int(tmp)) != tmp {
-				precision /= 10
+			tmp = from * float64(multiplier)
+			if b, _ := isClose(float64(int(tmp)), tmp, 1e-09, 0.0); !b {
+				multiplier *= 10
 				continue
 			}
 
-			tmp = to / precision
-			if float64(int(tmp)) != tmp {
-				precision /= 10
+			tmp = to * float64(multiplier)
+			if b, _ := isClose(float64(int(tmp)), tmp, 1e-09, 0.0); !b {
+				multiplier *= 10
 				continue
 			}
 
@@ -146,9 +167,8 @@ func (this *floatSampleFactory) Instance(expr BenchmarkExpression) (Sample, erro
 
 	}
 
-	return newFloatSample(from, to, precision), nil
+	return newFloatSample(from, to, multiplier), nil
 }
-
 
 type elementSample struct {
 	elements []interface{}
@@ -167,7 +187,6 @@ func (this *elementSample) Size() int {
 func (this *elementSample) Get(index int) interface{} {
 	return this.elements[index]
 }
-
 
 type taggedElement interface {
 	tags() []string
@@ -245,12 +264,11 @@ func newFilteredElementSample(filters []*regexp.Regexp, telements []taggedElemen
 	return newElementSample(elements)
 }
 
-
 type uniformDistribution struct {
-	rtype   VariableType
-	rand    *rand.Rand
-	size    int
-	values  []int
+	rtype  VariableType
+	rand   *rand.Rand
+	size   int
+	values []int
 }
 
 func newUniformDistribution(size int, seed int64, rtype VariableType) *uniformDistribution {
@@ -267,9 +285,9 @@ func newUniformDistribution(size int, seed int64, rtype VariableType) *uniformDi
 	}
 
 	return &uniformDistribution{
-		rtype: rtype,
-		rand: rand.New(rand.NewSource(seed)),
-		size: size,
+		rtype:  rtype,
+		rand:   rand.New(rand.NewSource(seed)),
+		size:   size,
 		values: values,
 	}
 }
@@ -290,8 +308,8 @@ func (this *uniformDistribution) Select() (int, error) {
 	}
 
 	if this.rtype != TypeRegular {
-		this.values[index] = this.values[this.size - 1]
-		this.values[this.size - 1] = value
+		this.values[index] = this.values[this.size-1]
+		this.values[this.size-1] = value
 		this.size -= 1
 
 		if this.size == 0 {
@@ -327,13 +345,12 @@ func (this *uniformDistribution) Copy(seed int64, rtype VariableType) Distributi
 	}
 
 	return &uniformDistribution{
-		rtype: rtype,
-		rand: rand.New(rand.NewSource(seed)),
-		size: this.size,
+		rtype:  rtype,
+		rand:   rand.New(rand.NewSource(seed)),
+		size:   this.size,
 		values: values,
 	}
 }
-
 
 type uniformRandom struct {
 }
@@ -346,7 +363,6 @@ func (this *uniformRandom) Instance(size int, seed int64, rtype VariableType) Di
 	return newUniformDistribution(size, seed, rtype)
 }
 
-
 type uniformRandomFactory struct {
 }
 
@@ -357,7 +373,6 @@ func newUniformRandomFactory() *uniformRandomFactory {
 func (this *uniformRandomFactory) instance(BenchmarkExpression) (Random, error) {
 	return &uniformRandom{}, nil
 }
-
 
 type normalRandomFactory struct {
 }

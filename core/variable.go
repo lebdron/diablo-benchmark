@@ -173,28 +173,27 @@ func newFloatVariable(inner Variable) FloatVariable {
 }
 
 func newFloatImmediate(value float64) FloatVariable {
-	var precision, tmp float64
+	var tmp float64
+	var multiplier int
 
-	precision = 1
+	multiplier = 1
 
 	for {
-		tmp = value / precision
-
-		if float64(int(tmp)) != tmp {
-			tmp = precision / 10
-
-			if tmp == 0 {
-				break
-			}
-
-			precision = tmp
-		} else {
+		if multiplier <= 0 {
 			break
 		}
+
+		tmp = value * float64(multiplier)
+		if b, _ := isClose(float64(int(tmp)), tmp, 1e-09, 0.0); !b {
+			multiplier *= 10
+			continue
+		}
+
+		break
 	}
 
 	return newFloatVariable(newVariable("float",
-		newFloatSample(value, value, precision),
+		newFloatSample(value, value, multiplier),
 		newUniformDistribution(1, 0, TypeRegular)))
 }
 
