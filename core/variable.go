@@ -1,14 +1,11 @@
 package core
 
-
 import (
 	"fmt"
 )
 
-
 // The sample space of a random variable.
 // All sample spaces are discrete sample space.
-//
 type Sample interface {
 	// Return the number of element in the sample.
 	// The return value is positive or zero.
@@ -23,12 +20,11 @@ type Sample interface {
 }
 
 // The type of a random variable.
-//
 type VariableType uint8
 
 const (
 	// regular random variable: the same event can happen many times.
-	TypeRegular       VariableType = iota
+	TypeRegular VariableType = iota
 
 	// A once iterator: the same event never happens twice.
 	TypeOnce
@@ -39,17 +35,15 @@ const (
 
 // The random space of a random variable.
 // This is essentially a factory for `Distribution`.
-//
 type Random interface {
 	// Create a new probability distribution for a sample space of the
 	// given size with the given seed and type.
 	// The given size must be positive or zero.
 	//
-	Instance(int, int64, VariableType)  Distribution
+	Instance(int, int64, VariableType) Distribution
 }
 
 // The probability distribution of a random variable.
-//
 type Distribution interface {
 	// Select an event in the probability space.
 	// Return the selected event with no error if such a possible event
@@ -69,7 +63,6 @@ type Distribution interface {
 }
 
 // A random variable.
-//
 type Variable interface {
 	// Return the string description of this variable domain.
 	//
@@ -91,17 +84,16 @@ type Variable interface {
 	Get() interface{}
 }
 
-
 type VariableImpl struct {
-	domain   string
-	sample   Sample
-	distrib  Distribution
+	domain  string
+	sample  Sample
+	distrib Distribution
 }
 
 func newVariable(domain string, sample Sample, distrib Distribution) *VariableImpl {
 	return &VariableImpl{
-		domain: domain,
-		sample: sample,
+		domain:  domain,
+		sample:  sample,
 		distrib: distrib,
 	}
 }
@@ -136,9 +128,8 @@ func (this *VariableImpl) Get() interface{} {
 	return this.sample.Get(index)
 }
 
-
 type variableWrapper struct {
-	inner  Variable
+	inner Variable
 }
 
 func (this *variableWrapper) init(inner Variable) {
@@ -161,7 +152,6 @@ func (this *variableWrapper) Get() interface{} {
 	return this.inner.Get()
 }
 
-
 type FloatVariable interface {
 	Variable
 
@@ -169,7 +159,6 @@ type FloatVariable interface {
 
 	GetFloat(float64) float64
 }
-
 
 type floatVariableWrapper struct {
 	variableWrapper
@@ -216,8 +205,14 @@ func (this *floatVariableWrapper) TryGetFloat() (float64, bool) {
 		return 0, false
 	}
 
-	// TODO: need to cast if opaque is int
-	return opaque.(float64), true
+	switch ret := opaque.(type) {
+	case float64:
+		return ret, true
+	case int:
+		return float64(ret), true
+	default:
+		return 0, false
+	}
 }
 
 func (this *floatVariableWrapper) GetFloat(defaultValue float64) float64 {
@@ -233,7 +228,6 @@ func (this *floatVariableWrapper) GetFloat(defaultValue float64) float64 {
 	}
 }
 
-
 type IntVariable interface {
 	FloatVariable
 
@@ -241,7 +235,6 @@ type IntVariable interface {
 
 	GetInt(int) int
 }
-
 
 type intVariableWrapper struct {
 	variableWrapper
@@ -306,7 +299,6 @@ func (this *intVariableWrapper) GetFloat(defaultValue float64) float64 {
 	}
 }
 
-
 type StringVariable interface {
 	TryGetString() (string, bool)
 
@@ -330,8 +322,8 @@ func newStringImmediate(value string) StringVariable {
 
 	elements[0] = value
 
-	return newStringVariable(newVariable("string", 
-		newElementSample(elements), 
+	return newStringVariable(newVariable("string",
+		newElementSample(elements),
 		newUniformDistribution(1, 0, TypeRegular)))
 }
 
@@ -358,12 +350,11 @@ func (this *stringVariableWrapper) GetString(defaultValue string) string {
 	}
 }
 
-
 type variableBaseDefinition struct {
-	expr     BenchmarkExpression
-	name     string
-	vtype    VariableType
-	seed     int64
+	expr  BenchmarkExpression
+	name  string
+	vtype VariableType
+	seed  int64
 }
 
 func parseVariable(expr BenchmarkExpression) (Variable, string, string, error) {
@@ -389,9 +380,9 @@ func parseVariable(expr BenchmarkExpression) (Variable, string, string, error) {
 	} else if vtypestr == "loop" {
 		def.vtype = TypeLoop
 	} else {
-		return nil, "", "", fmt.Errorf("%s: unknown variable type " +
+		return nil, "", "", fmt.Errorf("%s: unknown variable type "+
 			"'%s'", expr.FullPosition(), vtypestr)
-			
+
 	}
 
 	field, err = expr.TryField("seed")
@@ -421,7 +412,7 @@ func parseVariable(expr BenchmarkExpression) (Variable, string, string, error) {
 		return parseComposeVariable(&def)
 	}
 
-	return nil, "", "", fmt.Errorf("%s: variable must be 'sample', " +
+	return nil, "", "", fmt.Errorf("%s: variable must be 'sample', "+
 		"'copy' or 'compose'", expr.FullPosition())
 }
 
@@ -452,11 +443,10 @@ func parseSeed(expr BenchmarkExpression) (int64, error) {
 
 	// 	// hash it
 	// }
-	
+
 	return 0, fmt.Errorf("%s: must be an int or a string",
 		expr.FullPosition())
 }
-
 
 func parseSampleVariable(def *variableBaseDefinition) (Variable, string, string, error) {
 	var sampleFactory SampleFactory
@@ -496,7 +486,7 @@ func parseSampleVariable(def *variableBaseDefinition) (Variable, string, string,
 
 		randomFactory, ok = def.expr.system().randomFactory(rtype)
 		if !ok {
-			return nil, "", "", fmt.Errorf("%s: unknown random " +
+			return nil, "", "", fmt.Errorf("%s: unknown random "+
 				"type '%s'", def.expr.FullPosition(), rtype)
 		}
 
@@ -508,7 +498,7 @@ func parseSampleVariable(def *variableBaseDefinition) (Variable, string, string,
 	} else {
 		randomFactory, ok = def.expr.system().randomFactory("uniform")
 		if !ok {
-			return nil, "", "", fmt.Errorf("%s: unknown random " +
+			return nil, "", "", fmt.Errorf("%s: unknown random "+
 				"type '%s'", def.expr.FullPosition(), rtype)
 		}
 
@@ -550,6 +540,6 @@ func parseCopyVariable(def *variableBaseDefinition) (Variable, string, string, e
 }
 
 func parseComposeVariable(def *variableBaseDefinition) (Variable, string, string, error) {
-	return nil, "", "", fmt.Errorf("%s: compose variable not yet " +
+	return nil, "", "", fmt.Errorf("%s: compose variable not yet "+
 		"implemented", def.expr.FullPosition())
 }
