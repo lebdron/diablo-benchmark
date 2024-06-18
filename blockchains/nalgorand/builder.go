@@ -48,7 +48,7 @@ func newBuilder(logger core.Logger, client *algod.Client, ctx context.Context) *
 		applications:    make(map[string]*application),
 		provider:        newLazyParameterProvider(client),
 		lastRound:       0,
-		submitMaxTry:    10,
+		submitMaxTry:    100,
 		nextTxuid:       0,
 	}
 }
