@@ -238,7 +238,7 @@ func (this *transferTransaction) getTx() (virtualTransaction, *types.Transaction
 	tx = types.NewTx(&types.DynamicFeeTx{
 		ChainID:   params.chainId,
 		Nonce:     nonce,
-		GasTipCap: params.maxPriorityFeePerGas,
+		GasTipCap: transfer_max_gas_fee_cap,
 		GasFeeCap: transfer_max_gas_fee_cap,
 		Gas:       transfer_gas_limit,
 		To:        this.to,
