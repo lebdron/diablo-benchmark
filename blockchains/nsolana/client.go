@@ -60,19 +60,19 @@ func (this *BlockchainClient) DecodePayload(encoded []byte) (interface{}, error)
 func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 	tx := iact.Payload().(transaction)
 
-	this.logger.Tracef("schedule transaction %p", tx)
-
 	stx, err := tx.getTx()
 	if err != nil {
 		return err
 	}
+
+	this.logger.Tracef("schedule transaction %p, %v", tx, stx.Signatures[0])
 
 	hndl, err := this.confirmer.prepare(iact)
 	if err != nil {
 		return err
 	}
 
-	this.logger.Tracef("submit transaction %p", tx)
+	this.logger.Tracef("submit transaction %p, %v", tx, stx.Signatures[0])
 
 	iact.ReportSubmit()
 
@@ -89,7 +89,7 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 	}
 	if err != nil && !isBlockhashNotFound(err) {
 		iact.ReportAbort()
-		this.logger.Debugf("transaction aborted: %v", err)
+		this.logger.Debugf("transaction %v aborted: %v", stx.Signatures[0], err)
 		return err
 	}
 
@@ -135,14 +135,16 @@ func (h *subtxTransactionConfirmerHandle) confirm() error {
 		return err
 	}
 
+	stx, _ := tx.getTx()
+
 	if res.Value.Err != nil {
 		h.iact.ReportAbort()
-		h.logger.Tracef("transaction %p failed (%v)", &res.Value.Err)
+		h.logger.Tracef("transaction %p, %v failed (%v)", stx.Signatures[0], &res.Value.Err)
 		return nil
 	}
 
 	h.iact.ReportCommit()
-	h.logger.Tracef("transaction %p committed", tx)
+	h.logger.Tracef("transaction %p, %v committed", stx.Signatures[0], tx)
 	return nil
 }
 
@@ -285,8 +287,9 @@ func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
 	c.lock.Unlock()
 
 	for _, pending := range pendings {
-		c.logger.Tracef("commit transaction %p",
-			pending.iact.Payload())
+		stx, _ := pending.iact.Payload().(transaction).getTx()
+		c.logger.Tracef("commit transaction %p, %v",
+			pending.iact.Payload(), stx.Signatures[0])
 		pending.iact.ReportCommit()
 		pending.channel <- nil
 		close(pending.channel)
@@ -310,8 +313,9 @@ func (c *pollblkTransactionConfirmer) flushPendings(err error) {
 	c.logger.Debugf("flush pendings with %v", err)
 
 	for _, pending := range pendings {
-		c.logger.Tracef("abort transaction %p",
-			pending.iact.Payload())
+		stx, _ := pending.iact.Payload().(transaction).getTx()
+		c.logger.Tracef("abort transaction %p, %v",
+			pending.iact.Payload(), stx.Signatures[0])
 		pending.iact.ReportAbort()
 		pending.channel <- err
 		close(pending.channel)
