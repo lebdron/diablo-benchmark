@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
-	"errors"
-	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,24 +15,26 @@ import (
 )
 
 type BlockchainClient struct {
-	logger     core.Logger
-	client     *rpc.Client
-	ctx        context.Context
-	commitment rpc.CommitmentType
-	provider   parameterProvider
-	preparer   transactionPreparer
-	confirmer  transactionConfirmer
+	logger      core.Logger
+	client      *rpc.Client
+	blockClient *blockClient
+	ctx         context.Context
+	commitment  rpc.CommitmentType
+	provider    parameterProvider
+	preparer    transactionPreparer
+	confirmer   transactionConfirmer
 }
 
-func newClient(logger core.Logger, client *rpc.Client, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
+func newClient(logger core.Logger, client *rpc.Client, blockClient *blockClient, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
 	return &BlockchainClient{
-		logger:     logger,
-		client:     client,
-		ctx:        context.Background(),
-		commitment: rpc.CommitmentFinalized,
-		provider:   provider,
-		preparer:   preparer,
-		confirmer:  confirmer,
+		logger:      logger,
+		client:      client,
+		blockClient: blockClient,
+		ctx:         context.Background(),
+		commitment:  rpc.CommitmentFinalized,
+		provider:    provider,
+		preparer:    preparer,
+		confirmer:   confirmer,
 	}
 }
 
@@ -190,9 +189,7 @@ func (c *subtxTransactionConfirmer) prepare(iact core.Interaction) (transactionC
 
 type pollblkTransactionConfirmer struct {
 	logger    core.Logger
-	client    *rpc.Client
-	wsClient  *ws.Client
-	ctx       context.Context
+	blocks    <-chan blockResult
 	err       error
 	lock      sync.Mutex
 	pendings  map[solana.Signature]*pollblkTransactionConfirmerPending
@@ -204,23 +201,29 @@ type pollblkTransactionConfirmerPending struct {
 	iact    core.Interaction
 }
 
-func newPollblkTransactionConfirmer(logger core.Logger, client *rpc.Client, wsClient *ws.Client, ctx context.Context) *pollblkTransactionConfirmer {
-	var this pollblkTransactionConfirmer
+func newPollblkTransactionConfirmer(logger core.Logger, blocks <-chan blockResult) *pollblkTransactionConfirmer {
+	c := &pollblkTransactionConfirmer{
+		logger:    logger,
+		blocks:    blocks,
+		pendings:  make(map[solana.Signature]*pollblkTransactionConfirmerPending),
+		committed: make(map[solana.Signature]struct{}),
+	}
 
-	this.logger = logger
-	this.client = client
-	this.wsClient = wsClient
-	this.ctx = ctx
-	this.err = nil
-	this.pendings = make(map[solana.Signature]*pollblkTransactionConfirmerPending)
-	this.committed = make(map[solana.Signature]struct{})
+	go func() {
+		var err error
+		for result := range blocks {
+			if result.err != nil {
+				err = result.err
+				break
+			}
+			if len(result.block.Signatures) > 0 {
+				c.reportHashes(result.block.Signatures)
+			}
+		}
+		c.flushPendings(err)
+	}()
 
-	go func(confirmer *pollblkTransactionConfirmer) {
-		err := confirmer.run()
-		confirmer.flushPendings(err)
-	}(&this)
-
-	return &this
+	return c
 }
 
 func (c *pollblkTransactionConfirmer) prepare(iact core.Interaction) (transactionConfirmerHandle, error) {
@@ -319,99 +322,5 @@ func (c *pollblkTransactionConfirmer) flushPendings(err error) {
 		pending.iact.ReportAbort()
 		pending.channel <- err
 		close(pending.channel)
-	}
-}
-
-func (c *pollblkTransactionConfirmer) processBlock(number uint64) error {
-	var block *rpc.GetBlockResult
-	var err error
-
-	c.logger.Tracef("poll new block (number = %d)", number)
-
-	includeRewards := false
-	for {
-		c.logger.Tracef("calling GetBlockWithOpts %v", number)
-		block, err = c.client.GetBlockWithOpts(
-			c.ctx,
-			number,
-			&rpc.GetBlockOpts{
-				TransactionDetails: rpc.TransactionDetailsSignatures,
-				Rewards:            &includeRewards,
-				// should be safe as we request blocks for rooted slots
-				Commitment: rpc.CommitmentConfirmed,
-			})
-		c.logger.Tracef("returned from GetBlockWithOpts %v", number)
-
-		// rooted slot should be available
-		var rpcerr *jsonrpc.RPCError
-		if errors.As(err, &rpcerr) && rpcerr.Code == -32004 {
-			c.logger.Tracef("GetBlockWithOpts error %v", err)
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		break
-	}
-	if err != nil {
-		return fmt.Errorf("GetBlockWithOpts failed: %w", err)
-	}
-
-	if len(block.Signatures) > 0 {
-		c.reportHashes(block.Signatures)
-	}
-
-	return nil
-}
-
-func (c *pollblkTransactionConfirmer) run() error {
-	subscription, err := c.wsClient.RootSubscribe()
-	if err != nil {
-		return fmt.Errorf("RootSubscribe failed: %w", err)
-	}
-	defer subscription.Unsubscribe()
-
-	c.logger.Tracef("subscribe to new head events")
-
-	// slot, err := c.client.GetFirstAvailableBlock(c.ctx)
-	// if err != nil {
-	// 	return fmt.Errorf("GetFirstAvailableBlock failed: %w", err)
-	// }
-	slot := uint64(0)
-	subSlot := slot
-	for {
-		err := c.processBlock(slot)
-		var rpcerr *jsonrpc.RPCError
-		if errors.As(err, &rpcerr) && (rpcerr.Code == -32001 || rpcerr.Code == -32007) {
-			if rpcerr.Code == -32001 {
-				slot, err = strconv.ParseUint(rpcerr.Message[strings.LastIndex(rpcerr.Message, " ")+1:], 10, 64)
-				if err != nil {
-					return fmt.Errorf("failed to parse slot: %w", err)
-				}
-			} else if rpcerr.Code == -32007 {
-				slot += 1
-			}
-			c.logger.Tracef("skipping to slot %v", slot)
-			continue
-		} else if errors.Is(err, rpc.ErrNotConfirmed) {
-			c.logger.Tracef("processBlock %v failed with %v, skipping", slot, err)
-		} else if err != nil {
-			return fmt.Errorf("processBlock failed: %w", err)
-		}
-		c.logger.Tracef("processed slot %v", slot)
-		slot++
-
-		for subSlot < slot {
-			event, err := subscription.Recv()
-			if err != nil {
-				return fmt.Errorf("Recv failed: %w", err)
-			}
-			if event == nil {
-				return fmt.Errorf("received nil slot")
-			}
-			cand := uint64(*event)
-			if cand > subSlot {
-				subSlot = cand
-			}
-			c.logger.Tracef("received root slot %v, new slot %v", cand, subSlot)
-		}
 	}
 }

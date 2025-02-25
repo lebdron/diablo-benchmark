@@ -156,7 +156,7 @@ func (this *parameterlessTransaction) getTx() (virtualTransaction, *solana.Trans
 		return this, nil, err
 	}
 
-	builder.SetRecentBlockHash(*params.blockhash)
+	builder.SetRecentBlockHash(params.blockhash)
 	utx, err := builder.Build()
 	if err != nil {
 		return this, nil, err
@@ -233,7 +233,7 @@ func (this *transferTransaction) getTx() (virtualTransaction, *solana.Transactio
 
 	tx, err := solana.NewTransaction(
 		[]solana.Instruction{instruction},
-		*params.blockhash,
+		params.blockhash,
 		solana.TransactionPayer(from))
 	if err != nil {
 		return this, nil, err
@@ -426,7 +426,7 @@ func (this *invokeTransaction) getTx() (virtualTransaction, *solana.Transaction,
 
 	tx, err := solana.NewTransaction(
 		[]solana.Instruction{instruction},
-		*params.blockhash,
+		params.blockhash,
 		solana.TransactionPayer(from))
 	if err != nil {
 		return this, nil, err
@@ -436,11 +436,52 @@ func (this *invokeTransaction) getTx() (virtualTransaction, *solana.Transaction,
 }
 
 type parameters struct {
-	blockhash *solana.Hash
+	blockhash solana.Hash
 }
 
 type parameterProvider interface {
-	getParams() (*parameters, error)
+	getParams() (parameters, error)
+}
+
+type blockParameterProvider struct {
+	params parameters
+	err    error
+	lock   sync.RWMutex
+}
+
+func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvider, error) {
+	result, ok := <-blocks
+	if !ok {
+		return nil, fmt.Errorf("no blocks received")
+	}
+
+	if result.err != nil {
+		return nil, fmt.Errorf("error during initialization: %w", result.err)
+	}
+
+	p := &blockParameterProvider{
+		params: parameters{result.block.Blockhash},
+	}
+
+	go func() {
+		for result := range blocks {
+			p.lock.Lock()
+			if result.err != nil {
+				p.err = result.err
+				return
+			}
+			p.params = parameters{result.block.PreviousBlockhash}
+			p.lock.Unlock()
+		}
+	}()
+
+	return p, nil
+}
+
+func (p *blockParameterProvider) getParams() (parameters, error) {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	return p.params, p.err
 }
 
 type directParameterProvider struct {
@@ -455,56 +496,46 @@ func newDirectParameterProvider(client *rpc.Client, ctx context.Context) *direct
 	}
 }
 
-func (this *directParameterProvider) getParams() (*parameters, error) {
-	var params parameters
-
+func (this *directParameterProvider) getParams() (parameters, error) {
 	blockhash, err := this.client.GetLatestBlockhash(this.ctx, rpc.CommitmentFinalized)
 	if err != nil {
-		return nil, err
+		return parameters{}, err
 	}
 
-	params.blockhash = &blockhash.Value.Blockhash
-
-	return &params, nil
+	return parameters{blockhash.Value.Blockhash}, nil
 }
 
 type cachedParameterProvider struct {
-	params   *parameters
-	lock     sync.RWMutex
-	provider parameterProvider
+	params parameters
+	err    error
+	lock   sync.RWMutex
 }
 
-func newCachedParameterProvider(params *parameters, provider parameterProvider) *cachedParameterProvider {
-	p := cachedParameterProvider{
-		params:   params,
-		provider: provider,
+func newCachedParameterProvider(provider parameterProvider) (*cachedParameterProvider, error) {
+	params, err := provider.getParams()
+	if err != nil {
+		return nil, fmt.Errorf("error during initialization: %w", err)
 	}
 
-	go p.run()
+	p := &cachedParameterProvider{
+		params: params,
+	}
 
-	return &p
-}
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
 
-func (p *cachedParameterProvider) getParams() (*parameters, error) {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-	return p.params, nil
-}
-
-func (p *cachedParameterProvider) run() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
+		for range ticker.C {
+			current := p.params
 			for {
-				current, err := p.getParams()
-				params, err := p.provider.getParams()
+				params, err := provider.getParams()
 				if err != nil {
+					p.lock.Lock()
+					p.err = err
+					p.lock.Unlock()
 					return
 				}
-				if !current.blockhash.Equals(*params.blockhash) {
+				if !current.blockhash.Equals(params.blockhash) {
 					p.lock.Lock()
 					p.params = params
 					p.lock.Unlock()
@@ -513,5 +544,13 @@ func (p *cachedParameterProvider) run() {
 				time.Sleep(default_ms_per_slot / 2)
 			}
 		}
-	}
+	}()
+
+	return p, nil
+}
+
+func (p *cachedParameterProvider) getParams() (parameters, error) {
+	p.lock.RLock()
+	defer p.lock.RUnlock()
+	return p.params, p.err
 }

@@ -142,7 +142,15 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 		return nil, err
 	}
 
-	confirmer := newPollblkTransactionConfirmer(logger, client, sock, ctx)
+	confirmerChan := make(chan blockResult, 500)
+	providerChan := make(chan blockResult, 500)
+
+	blockClient, err := newBlockClient(logger, client, sock, ctx, []chan<- blockResult{confirmerChan, providerChan})
+	if err != nil {
+		return nil, err
+	}
+
+	confirmer := newPollblkTransactionConfirmer(logger, confirmerChan)
 
 	var provider parameterProvider
 	var preparer transactionPreparer
@@ -150,7 +158,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 		if key == "prepare" {
 			logger.Tracef("use prepare method '%s'", value)
 			provider, preparer, err =
-				parsePrepare(value, logger, client, ctx)
+				parsePrepare(value, client, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -161,22 +169,20 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	}
 
 	if (provider == nil) && (preparer == nil) {
-		logger.Tracef("use default prepare method 'cached'")
+		logger.Tracef("use default prepare method 'blocks'")
 
-		directProvider := newDirectParameterProvider(client, ctx)
-		params, err := directProvider.getParams()
+		provider, err = newBlockParameterProvider(providerChan)
 		if err != nil {
 			return nil, err
 		}
-		provider = newCachedParameterProvider(params, directProvider)
 
 		preparer = newNothingTransactionPreparer()
 	}
 
-	return newClient(logger, client, provider, preparer, confirmer), nil
+	return newClient(logger, client, blockClient, provider, preparer, confirmer), nil
 }
 
-func parsePrepare(value string, logger core.Logger, client *rpc.Client, ctx context.Context) (parameterProvider, transactionPreparer, error) {
+func parsePrepare(value string, client *rpc.Client, ctx context.Context) (parameterProvider, transactionPreparer, error) {
 	if value == "nothing" {
 		provider := newDirectParameterProvider(client, ctx)
 
@@ -187,11 +193,11 @@ func parsePrepare(value string, logger core.Logger, client *rpc.Client, ctx cont
 
 	if value == "cached" {
 		directProvider := newDirectParameterProvider(client, ctx)
-		params, err := directProvider.getParams()
+
+		provider, err := newCachedParameterProvider(directProvider)
 		if err != nil {
 			return nil, nil, err
 		}
-		provider := newCachedParameterProvider(params, directProvider)
 
 		preparer := newNothingTransactionPreparer()
 
