@@ -459,18 +459,21 @@ func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvid
 		return nil, fmt.Errorf("error during initialization: %w", result.err)
 	}
 
+	initialParams := parameters{result.block.PreviousBlockhash}
 	p := &blockParameterProvider{
-		params: parameters{result.block.Blockhash},
+		params: initialParams,
 	}
 
 	go func() {
+		current := initialParams
 		for result := range blocks {
 			p.lock.Lock()
 			if result.err != nil {
 				p.err = result.err
+				p.lock.Unlock()
 				return
 			}
-			p.params = parameters{result.block.PreviousBlockhash}
+			p.params, current = current, parameters{result.block.PreviousBlockhash}
 			p.lock.Unlock()
 		}
 	}()
