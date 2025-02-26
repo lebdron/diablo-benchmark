@@ -465,12 +465,13 @@ func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvid
 	}
 
 	go func() {
-		const bufferSize = 2
+		const bufferSize = 3
 		buffer := make([]parameters, bufferSize)
 		index := 0
 
-		// Initialize buffer with the first parameter
-		buffer[index] = initialParams
+		for i := 0; i < bufferSize; i++ {
+			buffer[i] = initialParams
+		}
 
 		for result := range blocks {
 			p.lock.Lock()
@@ -482,8 +483,6 @@ func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvid
 			index = (index + 1) % bufferSize
 			buffer[index] = parameters{result.block.PreviousBlockhash}
 
-			// Since we're interested in the second-to-last,
-			// we store that in params
 			p.params = buffer[(index+1)%bufferSize]
 
 			p.lock.Unlock()
