@@ -465,7 +465,7 @@ func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvid
 	}
 
 	go func() {
-		const bufferSize = 3
+		const bufferSize = 32
 		buffer := make([]parameters, bufferSize)
 		index := 0
 
