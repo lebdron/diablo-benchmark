@@ -82,6 +82,7 @@ func (bs *blockSubscriber) run() {
 			return
 		}
 
+		bs.logger.Debugf("blockSubscriber: received block %v", result.Value.Block.Blockhash)
 		bs.blocks <- blockResult{result: result}
 	}
 }
