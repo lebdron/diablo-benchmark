@@ -15,26 +15,26 @@ import (
 )
 
 type BlockchainClient struct {
-	logger      core.Logger
-	client      *rpc.Client
-	blockClient *blockClient
-	ctx         context.Context
-	commitment  rpc.CommitmentType
-	provider    parameterProvider
-	preparer    transactionPreparer
-	confirmer   transactionConfirmer
+	logger     core.Logger
+	client     *rpc.Client
+	subscriber *blockSubscriber
+	ctx        context.Context
+	commitment rpc.CommitmentType
+	provider   parameterProvider
+	preparer   transactionPreparer
+	confirmer  transactionConfirmer
 }
 
-func newClient(logger core.Logger, client *rpc.Client, blockClient *blockClient, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
+func newClient(logger core.Logger, client *rpc.Client, subscriber *blockSubscriber, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
 	return &BlockchainClient{
-		logger:      logger,
-		client:      client,
-		blockClient: blockClient,
-		ctx:         context.Background(),
-		commitment:  rpc.CommitmentFinalized,
-		provider:    provider,
-		preparer:    preparer,
-		confirmer:   confirmer,
+		logger:     logger,
+		client:     client,
+		subscriber: subscriber,
+		ctx:        context.Background(),
+		commitment: rpc.CommitmentFinalized,
+		provider:   provider,
+		preparer:   preparer,
+		confirmer:  confirmer,
 	}
 }
 
@@ -216,8 +216,9 @@ func newPollblkTransactionConfirmer(logger core.Logger, blocks <-chan blockResul
 				err = result.err
 				break
 			}
-			if len(result.block.Signatures) > 0 {
-				c.reportHashes(result.block.Signatures)
+			signatures := result.result.Value.Block.Signatures
+			if len(signatures) > 0 {
+				c.reportHashes(signatures)
 			}
 		}
 		c.flushPendings(err)
@@ -236,7 +237,7 @@ func (c *pollblkTransactionConfirmer) prepare(iact core.Interaction) (transactio
 
 	hash := &stx.Signatures[0]
 
-	channel := make(chan error)
+	channel := make(chan error, 1)
 
 	pending := &pollblkTransactionConfirmerPending{
 		channel: channel,
@@ -245,24 +246,26 @@ func (c *pollblkTransactionConfirmer) prepare(iact core.Interaction) (transactio
 
 	c.lock.Lock()
 
-	done := false
+	// Early return checks
 	if c.pendings == nil {
-		done = true
-	} else if _, ok := c.committed[*hash]; ok {
-		delete(c.committed, *hash)
-		iact.ReportCommit()
-		channel <- nil
-		close(channel)
-	} else {
-		c.pendings[*hash] = pending
-	}
-
-	c.lock.Unlock()
-
-	if done {
+		c.lock.Unlock()
 		close(channel)
 		return nil, c.err
 	}
+
+	if _, ok := c.committed[*hash]; ok {
+		delete(c.committed, *hash)
+		c.lock.Unlock()
+		iact.ReportCommit()
+		channel <- nil
+		close(channel)
+		return pending, nil
+	}
+
+	// Regular path - add to pendings
+	c.pendings[*hash] = pending
+	c.lock.Unlock()
+
 	return pending, nil
 }
 

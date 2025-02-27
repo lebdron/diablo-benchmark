@@ -142,10 +142,10 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 		return nil, err
 	}
 
-	confirmerChan := make(chan blockResult, 500)
-	providerChan := make(chan blockResult, 500)
+	confirmerChan := make(chan blockResult, 1000)
+	providerChan := make(chan blockResult, 1000)
 
-	blockClient, err := newBlockClient(logger, client, sock, ctx, []chan<- blockResult{confirmerChan, providerChan})
+	subscriber, err := newBlockSubscriber(logger, sock, []chan<- blockResult{confirmerChan, providerChan})
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 		preparer = newNothingTransactionPreparer()
 	}
 
-	return newClient(logger, client, blockClient, provider, preparer, confirmer), nil
+	return newClient(logger, client, subscriber, provider, preparer, confirmer), nil
 }
 
 func parsePrepare(value string, client *rpc.Client, ctx context.Context) (parameterProvider, transactionPreparer, error) {

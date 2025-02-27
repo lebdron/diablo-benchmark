@@ -459,7 +459,7 @@ func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvid
 		return nil, fmt.Errorf("error during initialization: %w", result.err)
 	}
 
-	initialParams := parameters{result.block.PreviousBlockhash}
+	initialParams := parameters{result.result.Value.Block.PreviousBlockhash}
 	p := &blockParameterProvider{
 		params: initialParams,
 	}
@@ -481,7 +481,7 @@ func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvid
 				return
 			}
 			index = (index + 1) % bufferSize
-			buffer[index] = parameters{result.block.PreviousBlockhash}
+			buffer[index] = parameters{result.result.Value.Block.PreviousBlockhash}
 
 			p.params = buffer[(index+1)%bufferSize]
 
