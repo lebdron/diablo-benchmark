@@ -171,7 +171,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	if (provider == nil) && (preparer == nil) {
 		logger.Tracef("use default prepare method 'blocks'")
 
-		provider, err = newBlockParameterProvider(providerChan)
+		provider, err = newBlockParameterProvider(logger, providerChan)
 		if err != nil {
 			return nil, err
 		}

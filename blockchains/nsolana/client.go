@@ -220,6 +220,8 @@ func newPollblkTransactionConfirmer(logger core.Logger, blocks <-chan blockResul
 			if len(signatures) > 0 {
 				c.reportHashes(signatures)
 			}
+			logger.Debugf("pollblkTransactionConfirmer: processed block %v slot %v",
+				result.result.Value.Block.Blockhash, result.result.Value.Slot)
 		}
 		c.flushPendings(err)
 	}()

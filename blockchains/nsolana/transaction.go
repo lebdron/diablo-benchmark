@@ -2,6 +2,7 @@ package nsolana
 
 import (
 	"context"
+	"diablo-benchmark/core"
 	"diablo-benchmark/util"
 	"encoding/binary"
 	"fmt"
@@ -449,7 +450,7 @@ type blockParameterProvider struct {
 	lock   sync.RWMutex
 }
 
-func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvider, error) {
+func newBlockParameterProvider(logger core.Logger, blocks <-chan blockResult) (*blockParameterProvider, error) {
 	result, ok := <-blocks
 	if !ok {
 		return nil, fmt.Errorf("no blocks received")
@@ -459,33 +460,25 @@ func newBlockParameterProvider(blocks <-chan blockResult) (*blockParameterProvid
 		return nil, fmt.Errorf("error during initialization: %w", result.err)
 	}
 
-	initialParams := parameters{result.result.Value.Block.PreviousBlockhash}
+	initialBlock := result.result.Value
 	p := &blockParameterProvider{
-		params: initialParams,
+		params: parameters{initialBlock.Block.Blockhash},
 	}
 
 	go func() {
-		const bufferSize = 16
-		buffer := make([]parameters, bufferSize)
-		index := 0
-
-		for i := 0; i < bufferSize; i++ {
-			buffer[i] = initialParams
-		}
-
 		for result := range blocks {
-			p.lock.Lock()
 			if result.err != nil {
+				p.lock.Lock()
 				p.err = result.err
 				p.lock.Unlock()
 				return
 			}
-			index = (index + 1) % bufferSize
-			buffer[index] = parameters{result.result.Value.Block.PreviousBlockhash}
 
-			p.params = buffer[(index+1)%bufferSize]
-
+			p.lock.Lock()
+			p.params.blockhash = result.result.Value.Block.Blockhash
 			p.lock.Unlock()
+			logger.Debugf("blockParameterProvider: new block %v slot %v",
+				result.result.Value.Block.Blockhash, result.result.Value.Slot)
 		}
 	}()
 
