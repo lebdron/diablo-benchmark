@@ -14,6 +14,12 @@ import (
 	"github.com/gagliardetto/solana-go/rpc/ws"
 )
 
+const (
+	RPCErrBlockNotAvailable = -32004
+	RPCErrSlotSkipped       = -32007
+	RPCErrBlockCleanedUp    = -32001
+)
+
 type blockResult struct {
 	block *rpc.GetBlockResult
 	err   error
@@ -49,42 +55,33 @@ func newBlockClient(logger core.Logger, client *rpc.Client, wsClient *ws.Client,
 	return bc, nil
 }
 
-func (bc *blockClient) getBlock(number uint64) error {
-	var block *rpc.GetBlockResult
-	var err error
-
+func (bc *blockClient) getBlock(number uint64) (*rpc.GetBlockResult, error) {
 	bc.logger.Tracef("poll new block (number = %d)", number)
 
 	includeRewards := false
+	opts := &rpc.GetBlockOpts{
+		TransactionDetails: rpc.TransactionDetailsSignatures,
+		Rewards:            &includeRewards,
+		// should be safe as we request blocks for rooted slots
+		Commitment: rpc.CommitmentConfirmed,
+	}
+
 	for {
-		bc.logger.Tracef("calling GetBlockWithOpts %v", number)
-		block, err = bc.client.GetBlockWithOpts(
-			bc.ctx,
-			number,
-			&rpc.GetBlockOpts{
-				TransactionDetails: rpc.TransactionDetailsSignatures,
-				Rewards:            &includeRewards,
-				// should be safe as we request blocks for rooted slots
-				Commitment: rpc.CommitmentConfirmed,
-			})
-		bc.logger.Tracef("returned from GetBlockWithOpts %v", number)
+		block, err := bc.client.GetBlockWithOpts(bc.ctx, number, opts)
 
 		// rooted slot should be available
 		var rpcerr *jsonrpc.RPCError
-		if errors.As(err, &rpcerr) && rpcerr.Code == -32004 {
+		if errors.As(err, &rpcerr) && rpcerr.Code == RPCErrBlockNotAvailable {
 			bc.logger.Tracef("GetBlockWithOpts error %v", err)
 			time.Sleep(50 * time.Millisecond)
 			continue
 		}
-		break
-	}
-	if err != nil {
-		return fmt.Errorf("GetBlockWithOpts failed: %w", err)
-	}
 
-	bc.blocks <- blockResult{block: block}
-
-	return nil
+		if err != nil {
+			return nil, fmt.Errorf("GetBlockWithOpts failed: %w", err)
+		}
+		return block, nil
+	}
 }
 
 func (bc *blockClient) run() {
@@ -96,47 +93,65 @@ func (bc *blockClient) run() {
 	// }
 	slot := uint64(0)
 	subSlot := slot
+
 	for {
-		err := bc.getBlock(slot)
+		block, err := bc.getBlock(slot)
+
 		var rpcerr *jsonrpc.RPCError
-		if errors.As(err, &rpcerr) && (rpcerr.Code == -32001 || rpcerr.Code == -32007) {
-			if rpcerr.Code == -32001 {
-				slot, err = strconv.ParseUint(rpcerr.Message[strings.LastIndex(rpcerr.Message, " ")+1:], 10, 64)
+		if errors.As(err, &rpcerr) {
+			switch rpcerr.Code {
+			case RPCErrBlockCleanedUp:
+				numStr := rpcerr.Message[strings.LastIndex(rpcerr.Message, " ")+1:]
+				slot, err = strconv.ParseUint(numStr, 10, 64)
 				if err != nil {
 					bc.blocks <- blockResult{err: fmt.Errorf("failed to parse slot: %w", err)}
 					return
 				}
-			} else if rpcerr.Code == -32007 {
+				bc.logger.Tracef("skipping to slot %v", slot)
+				continue
+			case RPCErrSlotSkipped:
 				slot += 1
+				bc.logger.Tracef("skipping to slot %v", slot)
+				continue
 			}
-			bc.logger.Tracef("skipping to slot %v", slot)
-			continue
 		} else if errors.Is(err, rpc.ErrNotConfirmed) {
-			bc.logger.Tracef("processBlock %v failed with %v, skipping", slot, err)
+			bc.logger.Tracef("getBlock %v failed with %v, skipping", slot, err)
 		} else if err != nil {
-			bc.blocks <- blockResult{err: fmt.Errorf("processBlock failed: %w", err)}
+			bc.blocks <- blockResult{err: fmt.Errorf("getBlock failed: %w", err)}
 			return
+		} else {
+			bc.logger.Tracef("received block %v", block.Blockhash)
+			bc.blocks <- blockResult{block: block}
 		}
+
 		bc.logger.Tracef("processed slot %v", slot)
 		slot++
 
-		for subSlot < slot {
-			event, err := bc.subscription.Recv()
-			if err != nil {
-				bc.blocks <- blockResult{err: fmt.Errorf("recv failed: %w", err)}
-				return
-			}
-			if event == nil {
-				bc.blocks <- blockResult{err: fmt.Errorf("received nil slot")}
-				return
-			}
-			cand := uint64(*event)
-			if cand > subSlot {
-				subSlot = cand
-			}
-			bc.logger.Tracef("received root slot %v, new slot %v", cand, subSlot)
+		// Process subscription events to update subSlot
+		if err := bc.updateSubSlot(&subSlot, slot); err != nil {
+			bc.blocks <- blockResult{err: err}
+			return
 		}
 	}
+}
+
+func (bc *blockClient) updateSubSlot(subSlot *uint64, slot uint64) error {
+	for *subSlot < slot {
+		event, err := bc.subscription.Recv()
+		if err != nil {
+			return fmt.Errorf("recv failed: %w", err)
+		}
+		if event == nil {
+			return fmt.Errorf("received nil slot")
+		}
+
+		cand := uint64(*event)
+		if cand > *subSlot {
+			*subSlot = cand
+		}
+		bc.logger.Tracef("received root slot %v, new slot %v", cand, *subSlot)
+	}
+	return nil
 }
 
 func (bc *blockClient) broadcast() {
