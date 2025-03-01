@@ -4,7 +4,6 @@ import (
 	"diablo-benchmark/core"
 	"fmt"
 
-	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gagliardetto/solana-go/rpc/ws"
 )
@@ -27,7 +26,7 @@ func newBlockSubscriber(logger core.Logger, wsClient *ws.Client, consumers []cha
 		Commitment:         rpc.CommitmentFinalized,
 		TransactionDetails: rpc.TransactionDetailsSignatures,
 		Rewards:            &includeRewards,
-		Encoding:           solana.EncodingBase64Zstd,
+		// Encoding:           solana.EncodingBase64Zstd,
 	}
 	subscription, err := wsClient.BlockSubscribe(ws.NewBlockSubscribeFilterAll(), opts)
 	if err != nil {
