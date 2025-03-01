@@ -265,6 +265,9 @@ func (p *pollblkTransactionConfirmerPending) confirm() error {
 }
 
 func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
+	start := time.Now()
+	count := len(hashes)
+
 	pendings := make([]*pollblkTransactionConfirmerPending, 0, len(hashes))
 
 	c.lock.Lock()
@@ -289,6 +292,10 @@ func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
 		pending.channel <- nil
 		close(pending.channel)
 	}
+
+	elapsed := time.Since(start)
+	c.logger.Debugf("Processed %d signatures in %v (%.2f per second)",
+		count, elapsed, float64(count)/elapsed.Seconds())
 }
 
 func (c *pollblkTransactionConfirmer) flushPendings(err error) {
@@ -350,6 +357,29 @@ type cachedParameterProvider struct {
 	updateComplete chan struct{}
 }
 
+func (p *cachedParameterProvider) getNewBlockhash() (parameters, error) {
+	current := p.params
+
+	// Try up to a reasonable number of times to get a new blockhash
+	for attempts := 0; attempts < 50; attempts++ {
+		params, err := p.provider.getParams(true)
+		if err != nil {
+			return parameters{}, err
+		}
+
+		// If we got a different blockhash, return it
+		if !current.blockhash.Equals(params.blockhash) {
+			return params, nil
+		}
+
+		// Wait before trying again
+		time.Sleep(default_ms_per_slot / 2)
+	}
+
+	// After several attempts, we still didn't get a new blockhash
+	return parameters{}, fmt.Errorf("failed to get new blockhash after multiple attempts")
+}
+
 func newCachedParameterProvider(provider parameterProvider) (*cachedParameterProvider, error) {
 	params, err := provider.getParams(false)
 	if err != nil {
@@ -367,23 +397,17 @@ func newCachedParameterProvider(provider parameterProvider) (*cachedParameterPro
 		defer ticker.Stop()
 
 		for range ticker.C {
-			current := p.params
-			for {
-				params, err := provider.getParams(true)
-				if err != nil {
-					p.lock.Lock()
-					p.err = err
-					p.lock.Unlock()
-					return
-				}
-				if !current.blockhash.Equals(params.blockhash) {
-					p.lock.Lock()
-					p.params = params
-					p.lock.Unlock()
-					break
-				}
-				time.Sleep(default_ms_per_slot / 2)
+			params, err := p.getNewBlockhash()
+			if err != nil {
+				p.lock.Lock()
+				p.err = err
+				p.lock.Unlock()
+				return
 			}
+
+			p.lock.Lock()
+			p.params = params
+			p.lock.Unlock()
 		}
 	}()
 
@@ -426,12 +450,16 @@ func (p *cachedParameterProvider) getParams(forceUpdate bool) (parameters, error
 	p.updateLock.Unlock()
 
 	// Get fresh parameters from the underlying provider
-	params, err := p.provider.getParams(true)
+	params, err := p.getNewBlockhash()
 
 	// Update our cached values
 	p.lock.Lock()
-	p.params = params
-	p.err = err
+	if err == nil {
+		p.params = params
+		p.err = nil
+	} else {
+		p.err = err
+	}
 	p.lock.Unlock()
 
 	// Signal that the update is complete
