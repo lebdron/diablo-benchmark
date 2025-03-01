@@ -150,7 +150,7 @@ func (this *BlockchainBuilder) CreateContract(name string) (interface{}, error) 
 	}
 
 	txBatches, err := newDeployContractTransactionBatches(appli, from, program,
-		storage, programLamports, storageLamports, this.provider)
+		storage, programLamports, storageLamports)
 	if err != nil {
 		return nil, err
 	}
@@ -164,9 +164,14 @@ func (this *BlockchainBuilder) CreateContract(name string) (interface{}, error) 
 		errs := make([]error, len(batch))
 		for idx, tx := range batch {
 			wg.Add(1)
-			go func(idx int, tx virtualTransaction) {
+			go func(idx int, tx transaction) {
 				defer wg.Done()
-				_, stx, err := tx.getTx()
+				params, err := this.provider.getParams(true)
+				if err != nil {
+					errs[idx] = err
+					return
+				}
+				stx, err := tx.getTx(params)
 				if err != nil {
 					errs[idx] = err
 					return
@@ -252,11 +257,8 @@ func (this *BlockchainBuilder) EncodeTransfer(amount int, from, to interface{}, 
 	this.amounts[faccount][taccount]++
 	amount = this.amounts[faccount][taccount]
 
-	tx := newTransferTransaction(uint64(amount),
-		faccount.private, &taccount.public, nil)
-
 	var buffer bytes.Buffer
-	err := tx.encode(&buffer)
+	err := encodeTransferTransaction(&buffer, uint64(amount), faccount.private, &taccount.public)
 	if err != nil {
 		return nil, err
 	}
@@ -273,11 +275,8 @@ func (this *BlockchainBuilder) EncodeInvoke(from, to interface{}, function strin
 		return nil, err
 	}
 
-	tx := newInvokeTransaction(0, faccount.private,
-		&tcontract.program.public, &tcontract.storage.public, payload, nil)
-
 	var buffer bytes.Buffer
-	err = tx.encode(&buffer)
+	err = encodeInvokeTransaction(&buffer, 0, faccount.private, &tcontract.program.public, &tcontract.storage.public, payload)
 	if err != nil {
 		return nil, err
 	}

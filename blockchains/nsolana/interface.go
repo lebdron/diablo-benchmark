@@ -153,12 +153,10 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	confirmer := newPollblkTransactionConfirmer(logger, confirmerChan)
 
 	var provider parameterProvider
-	var preparer transactionPreparer
 	for key, value := range params {
 		if key == "prepare" {
 			logger.Tracef("use prepare method '%s'", value)
-			provider, preparer, err =
-				parsePrepare(value, client, ctx)
+			provider, err = parsePrepare(value, client, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -168,27 +166,23 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 		return nil, fmt.Errorf("unknown parameter '%s'", key)
 	}
 
-	if (provider == nil) && (preparer == nil) {
-		logger.Tracef("use default prepare method 'blocks'")
+	if provider == nil {
+		logger.Tracef("use default prepare method 'cached'")
 
-		provider, err = newBlockParameterProvider(logger, providerChan)
+		provider, err = parsePrepare("cached", client, ctx)
 		if err != nil {
 			return nil, err
 		}
-
-		preparer = newNothingTransactionPreparer()
 	}
 
-	return newClient(logger, client, subscriber, provider, preparer, confirmer), nil
+	return newClient(logger, client, subscriber, provider, confirmer), nil
 }
 
-func parsePrepare(value string, client *rpc.Client, ctx context.Context) (parameterProvider, transactionPreparer, error) {
+func parsePrepare(value string, client *rpc.Client, ctx context.Context) (parameterProvider, error) {
 	if value == "nothing" {
 		provider := newDirectParameterProvider(client, ctx)
 
-		preparer := newNothingTransactionPreparer()
-
-		return provider, preparer, nil
+		return provider, nil
 	}
 
 	if value == "cached" {
@@ -196,13 +190,11 @@ func parsePrepare(value string, client *rpc.Client, ctx context.Context) (parame
 
 		provider, err := newCachedParameterProvider(directProvider)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 
-		preparer := newNothingTransactionPreparer()
-
-		return provider, preparer, nil
+		return provider, nil
 	}
 
-	return nil, nil, fmt.Errorf("unknown prepare method '%s'", value)
+	return nil, fmt.Errorf("unknown prepare method '%s'", value)
 }
