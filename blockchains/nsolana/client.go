@@ -348,8 +348,8 @@ func (p *directParameterProvider) getParams(forceUpdate bool) (parameters, error
 }
 
 type cachedParameterProvider struct {
+	logger         core.Logger
 	params         parameters
-	err            error
 	lock           sync.RWMutex
 	provider       parameterProvider
 	updating       bool
@@ -357,38 +357,37 @@ type cachedParameterProvider struct {
 	updateComplete chan struct{}
 }
 
-func (p *cachedParameterProvider) getNewBlockhash() (parameters, error) {
+func (p *cachedParameterProvider) getNewBlockhash() parameters {
 	p.lock.RLock()
 	current := p.params
 	p.lock.RUnlock()
 
 	// Try up to a reasonable number of times to get a new blockhash
-	for attempts := 0; attempts < 50; attempts++ {
+	for {
 		params, err := p.provider.getParams(true)
 		if err != nil {
-			return parameters{}, err
+			p.logger.Warnf("error getting new blockhash: %v", err)
+			continue
 		}
 
 		// If we got a different blockhash, return it
 		if !current.blockhash.Equals(params.blockhash) {
-			return params, nil
+			return params
 		}
 
 		// Wait before trying again
 		time.Sleep(default_ms_per_slot / 2)
 	}
-
-	// After several attempts, we still didn't get a new blockhash
-	return parameters{}, fmt.Errorf("failed to get new blockhash after multiple attempts")
 }
 
-func newCachedParameterProvider(provider parameterProvider) (*cachedParameterProvider, error) {
+func newCachedParameterProvider(logger core.Logger, provider parameterProvider) (*cachedParameterProvider, error) {
 	params, err := provider.getParams(false)
 	if err != nil {
 		return nil, fmt.Errorf("error during initialization: %w", err)
 	}
 
 	p := &cachedParameterProvider{
+		logger:         logger,
 		params:         params,
 		provider:       provider,
 		updateComplete: make(chan struct{}),
@@ -411,7 +410,7 @@ func (p *cachedParameterProvider) getParams(forceUpdate bool) (parameters, error
 		// Fast path for regular calls - just return cached params
 		p.lock.RLock()
 		defer p.lock.RUnlock()
-		return p.params, p.err
+		return p.params, nil
 	}
 
 	// For force update requests, we need to coordinate:
@@ -432,7 +431,7 @@ func (p *cachedParameterProvider) getParams(forceUpdate bool) (parameters, error
 		// Return the freshly updated params
 		p.lock.RLock()
 		defer p.lock.RUnlock()
-		return p.params, p.err
+		return p.params, nil
 	}
 
 	// We're the one doing the update
@@ -442,16 +441,11 @@ func (p *cachedParameterProvider) getParams(forceUpdate bool) (parameters, error
 	p.updateLock.Unlock()
 
 	// Get fresh parameters from the underlying provider
-	params, err := p.getNewBlockhash()
+	params := p.getNewBlockhash()
 
 	// Update our cached values
 	p.lock.Lock()
-	if err == nil {
-		p.params = params
-		p.err = nil
-	} else {
-		p.err = err
-	}
+	p.params = params
 	p.lock.Unlock()
 
 	// Signal that the update is complete
@@ -460,5 +454,5 @@ func (p *cachedParameterProvider) getParams(forceUpdate bool) (parameters, error
 	close(p.updateComplete)
 	p.updateLock.Unlock()
 
-	return params, err
+	return params, nil
 }
