@@ -26,7 +26,6 @@ func newBlockSubscriber(logger core.Logger, wsClient *ws.Client, consumers []cha
 		Commitment:         rpc.CommitmentFinalized,
 		TransactionDetails: rpc.TransactionDetailsSignatures,
 		Rewards:            &includeRewards,
-		// Encoding:           solana.EncodingBase64Zstd,
 	}
 	subscription, err := wsClient.BlockSubscribe(ws.NewBlockSubscribeFilterAll(), opts)
 	if err != nil {

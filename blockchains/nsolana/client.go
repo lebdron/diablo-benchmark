@@ -358,7 +358,9 @@ type cachedParameterProvider struct {
 }
 
 func (p *cachedParameterProvider) getNewBlockhash() (parameters, error) {
+	p.lock.RLock()
 	current := p.params
+	p.lock.RUnlock()
 
 	// Try up to a reasonable number of times to get a new blockhash
 	for attempts := 0; attempts < 50; attempts++ {
@@ -397,17 +399,7 @@ func newCachedParameterProvider(provider parameterProvider) (*cachedParameterPro
 		defer ticker.Stop()
 
 		for range ticker.C {
-			params, err := p.getNewBlockhash()
-			if err != nil {
-				p.lock.Lock()
-				p.err = err
-				p.lock.Unlock()
-				return
-			}
-
-			p.lock.Lock()
-			p.params = params
-			p.lock.Unlock()
+			p.getParams(true)
 		}
 	}()
 
