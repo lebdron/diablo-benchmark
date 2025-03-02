@@ -29,7 +29,7 @@ func newBlockSubscriber(logger core.Logger, wsClient *ws.Client, consumers []cha
 	}
 	subscription, err := wsClient.BlockSubscribe(ws.NewBlockSubscribeFilterAll(), opts)
 	if err != nil {
-		return nil, fmt.Errorf("RootSubscribe failed: %w", err)
+		return nil, fmt.Errorf("BlockSubscribe failed: %w", err)
 	}
 
 	bs := &blockSubscriber{
@@ -53,7 +53,8 @@ func (bs *blockSubscriber) broadcast() {
 				// Sent successfully
 			default:
 				// Non-blocking send failed
-				bs.logger.Warnf("Consumer %d's buffer is full, skipping update", i)
+				bs.logger.Warnf("Consumer %d's buffer is full, skipping update hash %v height %v",
+					i, update.result.Value.Block.Blockhash, *update.result.Value.Block.BlockHeight)
 			}
 		}
 
@@ -70,7 +71,7 @@ func (bs *blockSubscriber) broadcast() {
 // run processes incoming root slot notifications
 func (bs *blockSubscriber) run() {
 	defer bs.subscription.Unsubscribe()
-	lastSlot := uint64(0)
+	lastHeight := uint64(0)
 
 	for {
 		result, err := bs.subscription.Recv()
@@ -83,13 +84,13 @@ func (bs *blockSubscriber) run() {
 			return
 		}
 
-		slot := result.Value.Slot
-		if slot <= lastSlot {
-			bs.logger.Warnf("blockSubscriber: received out-of-order block %d after %d", slot, lastSlot)
+		height := *result.Value.Block.BlockHeight
+		if height <= lastHeight {
+			bs.logger.Warnf("blockSubscriber: received out-of-order block %d after %d", height, lastHeight)
 			continue
 		}
-		lastSlot = slot
-		bs.logger.Debugf("blockSubscriber: received block %v", result.Value.Block.Blockhash)
+		lastHeight = height
+		bs.logger.Debugf("blockSubscriber: received block %v height %v", result.Value.Block.Blockhash, height)
 		bs.blocks <- blockResult{result: result}
 	}
 }

@@ -30,6 +30,21 @@ func newClient(
 	subscriber *blockSubscriber,
 	provider parameterProvider,
 	confirmer transactionConfirmer) *BlockchainClient {
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			result, err := client.GetLatestBlockhash(context.Background(), rpc.CommitmentFinalized)
+			if err != nil {
+				logger.Errorf("GetLatestBlockhash failed: %v", err)
+				continue
+			}
+			logger.Debugf("Latest blockhash: %v last valid height %d",
+				result.Value.Blockhash, result.Value.LastValidBlockHeight)
+		}
+	}()
+
 	return &BlockchainClient{
 		logger:     logger,
 		client:     client,
@@ -215,8 +230,8 @@ func newPollblkTransactionConfirmer(logger core.Logger, blocks <-chan blockResul
 			if len(signatures) > 0 {
 				c.reportHashes(signatures)
 			}
-			logger.Debugf("pollblkTransactionConfirmer: processed block %v slot %v",
-				result.result.Value.Block.Blockhash, result.result.Value.Slot)
+			logger.Debugf("pollblkTransactionConfirmer: processed block %v height %v",
+				result.result.Value.Block.Blockhash, *result.result.Value.Block.BlockHeight)
 		}
 		c.flushPendings(err)
 	}()
@@ -385,6 +400,7 @@ func newCachedParameterProvider(logger core.Logger, blocks <-chan blockResult) (
 			p.last = update
 
 			// Notify any waiters that might be interested in this block
+			numBefore := len(p.waiters)
 			newWaiters := make([]waiter, 0, len(p.waiters))
 			for _, w := range p.waiters {
 				if update.result.Value.Block.Blockhash != w.blockhash {
@@ -404,7 +420,10 @@ func newCachedParameterProvider(logger core.Logger, blocks <-chan blockResult) (
 				}
 			}
 			p.waiters = newWaiters
+			numAfter := len(p.waiters)
 			p.lock.Unlock()
+			p.logger.Debugf("cachedParameterProvider: processed block %v height %v waiters %v -> %v",
+				update.result.Value.Block.Blockhash, *update.result.Value.Block.BlockHeight, numBefore, numAfter)
 		}
 	}()
 
