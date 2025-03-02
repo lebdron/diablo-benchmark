@@ -70,6 +70,7 @@ func (bs *blockSubscriber) broadcast() {
 // run processes incoming root slot notifications
 func (bs *blockSubscriber) run() {
 	defer bs.subscription.Unsubscribe()
+	lastSlot := uint64(0)
 
 	for {
 		result, err := bs.subscription.Recv()
@@ -82,6 +83,12 @@ func (bs *blockSubscriber) run() {
 			return
 		}
 
+		slot := result.Value.Slot
+		if slot <= lastSlot {
+			bs.logger.Warnf("blockSubscriber: received out-of-order block %d after %d", slot, lastSlot)
+			continue
+		}
+		lastSlot = slot
 		bs.logger.Debugf("blockSubscriber: received block %v", result.Value.Block.Blockhash)
 		bs.blocks <- blockResult{result: result}
 	}

@@ -166,12 +166,12 @@ func (this *BlockchainBuilder) CreateContract(name string) (interface{}, error) 
 			wg.Add(1)
 			go func(idx int, tx transaction) {
 				defer wg.Done()
-				params, err := this.provider.getParams(true)
+				params, err := this.provider.getParams(solana.Hash{})
 				if err != nil {
 					errs[idx] = err
 					return
 				}
-				stx, err := tx.getTx(params.Value.Blockhash)
+				stx, err := tx.getTx(params)
 				if err != nil {
 					errs[idx] = err
 					return

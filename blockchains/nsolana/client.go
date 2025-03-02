@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -58,12 +57,12 @@ func (this *BlockchainClient) DecodePayload(encoded []byte) (interface{}, error)
 func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 	tx := iact.Payload().(transaction)
 
-	params, err := this.provider.getParams(false)
+	params, err := this.provider.getParams(solana.Hash{})
 	if err != nil {
 		return err
 	}
 
-	stx, err := tx.getTx(params.Value.Blockhash)
+	stx, err := tx.getTx(params)
 	if err != nil {
 		return err
 	}
@@ -92,11 +91,11 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 		if rpcerr, ok := err.(*jsonrpc.RPCError); ok &&
 			rpcerr.Code == -32002 &&
 			strings.Contains(rpcerr.Message, "Blockhash not found") {
-			params, err := this.provider.getParams(true)
+			params, err = this.provider.getParams(params)
 			if err != nil {
 				return err
 			}
-			stx, err = tx.getTx(params.Value.Blockhash)
+			stx, err = tx.getTx(params)
 			if err != nil {
 				return err
 			}
@@ -323,7 +322,7 @@ func (c *pollblkTransactionConfirmer) flushPendings(err error) {
 }
 
 type parameterProvider interface {
-	getParams(forceUpdate bool) (*rpc.GetLatestBlockhashResult, error)
+	getParams(old solana.Hash) (solana.Hash, error)
 }
 
 type directParameterProvider struct {
@@ -338,146 +337,108 @@ func newDirectParameterProvider(client *rpc.Client, ctx context.Context) *direct
 	}
 }
 
-func (p *directParameterProvider) getParams(forceUpdate bool) (*rpc.GetLatestBlockhashResult, error) {
-	return p.client.GetLatestBlockhash(p.ctx, rpc.CommitmentFinalized)
-}
-
-type cachedParameterProvider struct {
-	logger         core.Logger
-	params         *rpc.GetLatestBlockhashResult
-	lock           sync.RWMutex
-	provider       parameterProvider
-	updating       bool
-	updateLock     sync.Mutex
-	updateComplete chan struct{}
-}
-
-func (p *cachedParameterProvider) getNewBlockhash() *rpc.GetLatestBlockhashResult {
-	p.lock.RLock()
-	current := p.params
-	p.lock.RUnlock()
-
-	// Try up to a reasonable number of times to get a new blockhash
+func (p *directParameterProvider) getParams(old solana.Hash) (solana.Hash, error) {
 	for {
-		params, err := p.provider.getParams(true)
+		result, err := p.client.GetLatestBlockhash(p.ctx, rpc.CommitmentFinalized)
 		if err != nil {
-			p.logger.Warnf("error getting new blockhash: %v", err)
+			return solana.Hash{}, err
+		}
+
+		if old == result.Value.Blockhash {
+			time.Sleep(default_ms_per_slot / 2)
 			continue
 		}
 
-		// If we got a different blockhash, return it
-		if !current.Value.Blockhash.Equals(params.Value.Blockhash) {
-			p.logger.Debugf(
-				"got new blockhash slot %v blockhash %v last valid height %v",
-				params.Context.Slot,
-				params.Value.Blockhash,
-				params.Value.LastValidBlockHeight)
-			return params
-		}
-
-		// Wait before trying again
-		time.Sleep(default_ms_per_slot / 2)
+		return result.Value.Blockhash, nil
 	}
 }
 
-func newCachedParameterProvider(
-	logger core.Logger, provider parameterProvider, wsClient *ws.Client) (*cachedParameterProvider, error) {
-	params, err := provider.getParams(false)
-	if err != nil {
-		return nil, fmt.Errorf("error during initialization: %w", err)
+type waiter struct {
+	blockhash solana.Hash
+	notify    chan<- blockResult
+}
+
+type cachedParameterProvider struct {
+	logger  core.Logger
+	last    blockResult
+	lock    sync.RWMutex
+	updates <-chan blockResult
+	waiters []waiter
+}
+
+func newCachedParameterProvider(logger core.Logger, blocks <-chan blockResult) (*cachedParameterProvider, error) {
+	result := <-blocks
+	if result.err != nil {
+		return nil, result.err
 	}
 
 	p := &cachedParameterProvider{
-		logger:         logger,
-		params:         params,
-		provider:       provider,
-		updateComplete: make(chan struct{}),
-	}
-
-	subscription, err := wsClient.SlotSubscribe()
-	if err != nil {
-		return nil, fmt.Errorf("SlotSubscribe failed: %w", err)
+		logger:  logger,
+		last:    result,
+		updates: blocks,
+		waiters: make([]waiter, 0),
 	}
 
 	go func() {
-		defer subscription.Unsubscribe()
+		for update := range p.updates {
+			p.lock.Lock()
+			p.last = update
 
-		for {
-			result, err := subscription.Recv()
-			if err != nil {
-				logger.Errorf("SlotSubscription Recv failed: %v", err)
-				return
+			// Notify any waiters that might be interested in this block
+			newWaiters := make([]waiter, 0, len(p.waiters))
+			for _, w := range p.waiters {
+				if update.result.Value.Block.Blockhash != w.blockhash {
+					// This waiter is looking for a different blockhash than this one
+					// Notify them of the new block
+					select {
+					case w.notify <- update:
+						// Successfully notified, don't keep in waiters list
+					default:
+						// Couldn't notify, keep in list
+						newWaiters = append(newWaiters, w)
+					}
+				} else {
+					// This block has the same hash they're comparing against
+					// Keep them in the waiters list
+					newWaiters = append(newWaiters, w)
+				}
 			}
-
-			if result == nil {
-				logger.Errorf("SlotSubscription Recv returned nil")
-				return
-			}
-
-			logger.Debugf("SlotSubscription: slot %v parent %v root %v", result.Slot, result.Parent, result.Root)
-		}
-	}()
-
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			p.getParams(true)
+			p.waiters = newWaiters
+			p.lock.Unlock()
 		}
 	}()
 
 	return p, nil
 }
 
-func (p *cachedParameterProvider) getParams(forceUpdate bool) (*rpc.GetLatestBlockhashResult, error) {
-	if !forceUpdate {
-		// Fast path for regular calls - just return cached params
-		p.lock.RLock()
-		defer p.lock.RUnlock()
-		return p.params, nil
+func (p *cachedParameterProvider) getParams(old solana.Hash) (solana.Hash, error) {
+	// Fast path check with the cached value
+	p.lock.RLock()
+	last := p.last
+	p.lock.RUnlock()
+
+	if last.err != nil {
+		return solana.Hash{}, last.err
+	}
+	if last.result.Value.Block.Blockhash != old {
+		return last.result.Value.Block.Blockhash, nil
 	}
 
-	// For force update requests, we need to coordinate:
+	// Set up a channel just for this caller
+	newBlockCh := make(chan blockResult, 1)
 
-	// First try to get the update lock - only one goroutine should actually
-	// perform the update
-	p.updateLock.Lock()
-
-	// Check if someone else is already updating
-	if p.updating {
-		// Someone else is updating, create a channel to wait on
-		updateDone := p.updateComplete
-		p.updateLock.Unlock()
-
-		// Wait for the update to complete
-		<-updateDone
-
-		// Return the freshly updated params
-		p.lock.RLock()
-		defer p.lock.RUnlock()
-		return p.params, nil
-	}
-
-	// We're the one doing the update
-	p.updating = true
-	// Create a new channel for others to wait on
-	p.updateComplete = make(chan struct{})
-	p.updateLock.Unlock()
-
-	// Get fresh parameters from the underlying provider
-	params := p.getNewBlockhash()
-
-	// Update our cached values
+	// Register our interest in new blocks
 	p.lock.Lock()
-	p.params = params
+	p.waiters = append(p.waiters, waiter{
+		blockhash: old,
+		notify:    newBlockCh,
+	})
 	p.lock.Unlock()
 
-	// Signal that the update is complete
-	p.updateLock.Lock()
-	p.updating = false
-	close(p.updateComplete)
-	p.updateLock.Unlock()
-
-	return params, nil
+	// Wait for notification of a matching block
+	result := <-newBlockCh
+	if result.err != nil {
+		return solana.Hash{}, result.err
+	}
+	return result.result.Value.Block.Blockhash, nil
 }

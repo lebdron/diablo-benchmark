@@ -156,7 +156,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	for key, value := range params {
 		if key == "prepare" {
 			logger.Tracef("use prepare method '%s'", value)
-			provider, err = parsePrepare(value, logger, client, sock, ctx)
+			provider, err = parsePrepare(value, logger, client, providerChan, ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -169,7 +169,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	if provider == nil {
 		logger.Tracef("use default prepare method 'cached'")
 
-		provider, err = parsePrepare("cached", logger, client, sock, ctx)
+		provider, err = parsePrepare("cached", logger, client, providerChan, ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +182,7 @@ func parsePrepare(
 	value string,
 	logger core.Logger,
 	client *rpc.Client,
-	wsClient *ws.Client,
+	blocks <-chan blockResult,
 	ctx context.Context) (parameterProvider, error) {
 	if value == "nothing" {
 		provider := newDirectParameterProvider(client, ctx)
@@ -191,9 +191,7 @@ func parsePrepare(
 	}
 
 	if value == "cached" {
-		directProvider := newDirectParameterProvider(client, ctx)
-
-		provider, err := newCachedParameterProvider(logger, directProvider, wsClient)
+		provider, err := newCachedParameterProvider(logger, blocks)
 		if err != nil {
 			return nil, err
 		}
