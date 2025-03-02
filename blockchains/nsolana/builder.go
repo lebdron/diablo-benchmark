@@ -171,7 +171,7 @@ func (this *BlockchainBuilder) CreateContract(name string) (interface{}, error) 
 					errs[idx] = err
 					return
 				}
-				stx, err := tx.getTx(params)
+				stx, err := tx.getTx(params.Value.Blockhash)
 				if err != nil {
 					errs[idx] = err
 					return

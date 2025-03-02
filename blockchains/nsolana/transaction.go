@@ -19,12 +19,8 @@ const (
 	default_ms_per_slot = 400
 )
 
-type parameters struct {
-	blockhash solana.Hash
-}
-
 type transaction interface {
-	getTx(parameters) (*solana.Transaction, error)
+	getTx(blockhash solana.Hash) (*solana.Transaction, error)
 }
 
 func decodeTransaction(src io.Reader) (transaction, error) {
@@ -48,17 +44,17 @@ func decodeTransaction(src io.Reader) (transaction, error) {
 }
 
 type baseTransaction struct {
-	buildTx func(parameters) (*solana.Transaction, error)
+	buildTx func(blockhash solana.Hash) (*solana.Transaction, error)
 	signers []solana.PrivateKey
 }
 
 func newBaseTransaction(
-	buildTx func(parameters) (*solana.Transaction, error), signers []solana.PrivateKey) transaction {
+	buildTx func(blockhash solana.Hash) (*solana.Transaction, error), signers []solana.PrivateKey) transaction {
 	return &baseTransaction{buildTx, signers}
 }
 
-func (bt *baseTransaction) getTx(params parameters) (*solana.Transaction, error) {
-	tx, err := bt.buildTx(params)
+func (bt *baseTransaction) getTx(blockhash solana.Hash) (*solana.Transaction, error) {
+	tx, err := bt.buildTx(blockhash)
 	if err != nil {
 		return nil, err
 	}
@@ -79,8 +75,8 @@ func (bt *baseTransaction) getTx(params parameters) (*solana.Transaction, error)
 }
 
 func newPlainTransaction(instructions []solana.Instruction, signers []solana.PrivateKey) transaction {
-	buildTx := func(params parameters) (*solana.Transaction, error) {
-		return solana.NewTransaction(instructions, params.blockhash)
+	buildTx := func(blockhash solana.Hash) (*solana.Transaction, error) {
+		return solana.NewTransaction(instructions, blockhash)
 	}
 	return newBaseTransaction(buildTx, signers)
 }
@@ -129,8 +125,8 @@ func encodeTransferTransaction(dest io.Writer, amount uint64, from solana.Privat
 }
 
 func newBuilderTransaction(builder *solana.TransactionBuilder, signers []solana.PrivateKey) transaction {
-	buildTx := func(params parameters) (*solana.Transaction, error) {
-		return builder.SetRecentBlockHash(params.blockhash).Build()
+	buildTx := func(blockhash solana.Hash) (*solana.Transaction, error) {
+		return builder.SetRecentBlockHash(blockhash).Build()
 	}
 	return newBaseTransaction(buildTx, signers)
 }

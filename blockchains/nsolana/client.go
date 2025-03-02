@@ -63,7 +63,7 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 		return err
 	}
 
-	stx, err := tx.getTx(params)
+	stx, err := tx.getTx(params.Value.Blockhash)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 			if err != nil {
 				return err
 			}
-			stx, err = tx.getTx(params)
+			stx, err = tx.getTx(params.Value.Blockhash)
 			if err != nil {
 				return err
 			}
@@ -323,7 +323,7 @@ func (c *pollblkTransactionConfirmer) flushPendings(err error) {
 }
 
 type parameterProvider interface {
-	getParams(forceUpdate bool) (parameters, error)
+	getParams(forceUpdate bool) (*rpc.GetLatestBlockhashResult, error)
 }
 
 type directParameterProvider struct {
@@ -338,18 +338,13 @@ func newDirectParameterProvider(client *rpc.Client, ctx context.Context) *direct
 	}
 }
 
-func (p *directParameterProvider) getParams(forceUpdate bool) (parameters, error) {
-	blockhash, err := p.client.GetLatestBlockhash(p.ctx, rpc.CommitmentFinalized)
-	if err != nil {
-		return parameters{}, err
-	}
-
-	return parameters{blockhash.Value.Blockhash}, nil
+func (p *directParameterProvider) getParams(forceUpdate bool) (*rpc.GetLatestBlockhashResult, error) {
+	return p.client.GetLatestBlockhash(p.ctx, rpc.CommitmentFinalized)
 }
 
 type cachedParameterProvider struct {
 	logger         core.Logger
-	params         parameters
+	params         *rpc.GetLatestBlockhashResult
 	lock           sync.RWMutex
 	provider       parameterProvider
 	updating       bool
@@ -357,7 +352,7 @@ type cachedParameterProvider struct {
 	updateComplete chan struct{}
 }
 
-func (p *cachedParameterProvider) getNewBlockhash() parameters {
+func (p *cachedParameterProvider) getNewBlockhash() *rpc.GetLatestBlockhashResult {
 	p.lock.RLock()
 	current := p.params
 	p.lock.RUnlock()
@@ -371,7 +366,12 @@ func (p *cachedParameterProvider) getNewBlockhash() parameters {
 		}
 
 		// If we got a different blockhash, return it
-		if !current.blockhash.Equals(params.blockhash) {
+		if !current.Value.Blockhash.Equals(params.Value.Blockhash) {
+			p.logger.Debugf(
+				"got new blockhash slot %v blockhash %v last valid height %v",
+				params.Context.Slot,
+				params.Value.Blockhash,
+				params.Value.LastValidBlockHeight)
 			return params
 		}
 
@@ -380,7 +380,8 @@ func (p *cachedParameterProvider) getNewBlockhash() parameters {
 	}
 }
 
-func newCachedParameterProvider(logger core.Logger, provider parameterProvider) (*cachedParameterProvider, error) {
+func newCachedParameterProvider(
+	logger core.Logger, provider parameterProvider, wsClient *ws.Client) (*cachedParameterProvider, error) {
 	params, err := provider.getParams(false)
 	if err != nil {
 		return nil, fmt.Errorf("error during initialization: %w", err)
@@ -392,6 +393,30 @@ func newCachedParameterProvider(logger core.Logger, provider parameterProvider) 
 		provider:       provider,
 		updateComplete: make(chan struct{}),
 	}
+
+	subscription, err := wsClient.SlotSubscribe()
+	if err != nil {
+		return nil, fmt.Errorf("SlotSubscribe failed: %w", err)
+	}
+
+	go func() {
+		defer subscription.Unsubscribe()
+
+		for {
+			result, err := subscription.Recv()
+			if err != nil {
+				logger.Errorf("SlotSubscription Recv failed: %v", err)
+				return
+			}
+
+			if result == nil {
+				logger.Errorf("SlotSubscription Recv returned nil")
+				return
+			}
+
+			logger.Debugf("SlotSubscription: slot %v parent %v root %v", result.Slot, result.Parent, result.Root)
+		}
+	}()
 
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -405,7 +430,7 @@ func newCachedParameterProvider(logger core.Logger, provider parameterProvider) 
 	return p, nil
 }
 
-func (p *cachedParameterProvider) getParams(forceUpdate bool) (parameters, error) {
+func (p *cachedParameterProvider) getParams(forceUpdate bool) (*rpc.GetLatestBlockhashResult, error) {
 	if !forceUpdate {
 		// Fast path for regular calls - just return cached params
 		p.lock.RLock()
