@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"diablo-benchmark/core"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -11,8 +12,9 @@ import (
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
-	"github.com/gagliardetto/solana-go/rpc/ws"
 )
+
+const max_processing_age = 150
 
 type BlockchainClient struct {
 	logger     core.Logger
@@ -77,24 +79,25 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 		return err
 	}
 
-	stx, err := tx.getTx(params)
-	if err != nil {
-		return err
-	}
-	sig := stx.Signatures[0]
+	this.logger.Tracef("schedule transaction %p", tx)
 
-	this.logger.Tracef("schedule transaction %p, %v", tx, sig)
+	for i := 1; ; i++ {
+		stx, err := tx.getTx(params.blockhash)
+		if err != nil {
+			return err
+		}
+		sig := stx.Signatures[0]
 
-	hndl, err := this.confirmer.prepare(iact, sig)
-	if err != nil {
-		return err
-	}
+		hndl, err := this.confirmer.prepare(iact, sig, params.lastValidBlockHeight)
+		if err != nil {
+			return err
+		}
 
-	this.logger.Tracef("submit transaction %p, %v", tx, sig)
+		this.logger.Tracef("submit transaction %p, %v attempt %d", tx, sig, i)
 
-	iact.ReportSubmit()
+		// will only record the first submission
+		iact.ReportSubmit()
 
-	for {
 		_, err = this.client.SendTransactionWithOpts(
 			this.ctx,
 			stx,
@@ -106,94 +109,38 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 		if rpcerr, ok := err.(*jsonrpc.RPCError); ok &&
 			rpcerr.Code == -32002 &&
 			strings.Contains(rpcerr.Message, "Blockhash not found") {
-			params, err = this.provider.getParams(params)
-			if err != nil {
-				return err
+
+			this.confirmer.remove(sig)
+		} else if err != nil {
+			return fmt.Errorf("transaction %v failed: %w", sig, err)
+		} else {
+			result := hndl.confirm()
+			if result.err != nil {
+				return fmt.Errorf("transaction %v failed: %w", sig, result.err)
 			}
-			stx, err = tx.getTx(params)
-			if err != nil {
-				return err
+			if !result.resend {
+				return nil
 			}
-			continue
 		}
-		break
+		params, err = this.provider.getParams(params.blockhash)
+		if err != nil {
+			return err
+		}
 	}
-
-	if err != nil {
-		iact.ReportAbort()
-		this.logger.Debugf("transaction %v aborted: %v", sig, err)
-		return err
-	}
-
-	return hndl.confirm()
 }
 
 type transactionConfirmer interface {
-	prepare(core.Interaction, solana.Signature) (transactionConfirmerHandle, error)
+	prepare(core.Interaction, solana.Signature, uint64) (transactionConfirmerHandle, error)
+	remove(solana.Signature)
+}
+
+type confirmResult struct {
+	resend bool
+	err    error
 }
 
 type transactionConfirmerHandle interface {
-	confirm() error
-}
-
-type subtxTransactionConfirmerHandle struct {
-	logger core.Logger
-	iact   core.Interaction
-	sig    solana.Signature
-	sub    *ws.SignatureSubscription
-	mwait  time.Duration
-}
-
-func (h *subtxTransactionConfirmerHandle) confirm() error {
-	defer h.sub.Unsubscribe()
-	res, err := h.sub.RecvWithTimeout(h.mwait)
-	if err != nil {
-		return err
-	}
-
-	if res.Value.Err != nil {
-		h.iact.ReportAbort()
-		h.logger.Tracef("transaction %p, %v failed (%v)", h.iact.Payload(), h.sig, &res.Value.Err)
-		return nil
-	}
-
-	h.iact.ReportCommit()
-	h.logger.Tracef("transaction %p, %v committed", h.iact.Payload(), h.sig)
-	return nil
-}
-
-type subtxTransactionConfirmer struct {
-	logger   core.Logger
-	client   *rpc.Client
-	wsClient *ws.Client
-	ctx      context.Context
-	mtime    time.Duration
-}
-
-func newSubtxTransactionConfirmer(logger core.Logger, client *rpc.Client, wsClient *ws.Client, ctx context.Context) *subtxTransactionConfirmer {
-	return &subtxTransactionConfirmer{
-		logger:   logger,
-		client:   client,
-		wsClient: wsClient,
-		ctx:      context.Background(),
-		mtime:    60 * time.Second,
-	}
-}
-
-func (c *subtxTransactionConfirmer) prepare(
-	iact core.Interaction, sig solana.Signature) (transactionConfirmerHandle, error) {
-	sub, err := c.wsClient.SignatureSubscribe(sig, rpc.CommitmentFinalized)
-	if err != nil {
-		return nil, err
-	}
-
-	return &subtxTransactionConfirmerHandle{
-		logger: c.logger,
-		iact:   iact,
-		sig:    sig,
-		sub:    sub,
-		mwait:  c.mtime,
-	}, nil
+	confirm() confirmResult
 }
 
 type pollblkTransactionConfirmer struct {
@@ -206,9 +153,10 @@ type pollblkTransactionConfirmer struct {
 }
 
 type pollblkTransactionConfirmerPending struct {
-	channel chan error
+	channel chan confirmResult
 	iact    core.Interaction
 	sig     solana.Signature
+	height  uint64
 }
 
 func newPollblkTransactionConfirmer(logger core.Logger, blocks <-chan blockResult) *pollblkTransactionConfirmer {
@@ -228,7 +176,7 @@ func newPollblkTransactionConfirmer(logger core.Logger, blocks <-chan blockResul
 			}
 			signatures := result.result.Value.Block.Signatures
 			if len(signatures) > 0 {
-				c.reportHashes(signatures)
+				c.reportHashes(signatures, *result.result.Value.Block.BlockHeight)
 			}
 			logger.Debugf("pollblkTransactionConfirmer: processed block %v height %v",
 				result.result.Value.Block.Blockhash, *result.result.Value.Block.BlockHeight)
@@ -240,13 +188,14 @@ func newPollblkTransactionConfirmer(logger core.Logger, blocks <-chan blockResul
 }
 
 func (c *pollblkTransactionConfirmer) prepare(
-	iact core.Interaction, sig solana.Signature) (transactionConfirmerHandle, error) {
-	channel := make(chan error, 1)
+	iact core.Interaction, sig solana.Signature, height uint64) (transactionConfirmerHandle, error) {
+	channel := make(chan confirmResult, 1)
 
 	pending := &pollblkTransactionConfirmerPending{
 		channel: channel,
 		iact:    iact,
 		sig:     sig,
+		height:  height,
 	}
 
 	c.lock.Lock()
@@ -262,7 +211,7 @@ func (c *pollblkTransactionConfirmer) prepare(
 		delete(c.committed, sig)
 		c.lock.Unlock()
 		iact.ReportCommit()
-		channel <- nil
+		channel <- confirmResult{false, nil}
 		close(channel)
 		return pending, nil
 	}
@@ -274,15 +223,36 @@ func (c *pollblkTransactionConfirmer) prepare(
 	return pending, nil
 }
 
-func (p *pollblkTransactionConfirmerPending) confirm() error {
-	return <-p.channel
+func (c *pollblkTransactionConfirmer) remove(sig solana.Signature) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	if c.pendings == nil {
+		return
+	}
+
+	if pending, exists := c.pendings[sig]; exists {
+		delete(c.pendings, sig)
+		close(pending.channel)
+	}
 }
 
-func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
+func (p *pollblkTransactionConfirmerPending) confirm() confirmResult {
+	result, ok := <-p.channel
+	if !ok {
+		// Channel was closed, likely due to a new transaction being created
+		return confirmResult{true, nil}
+	}
+
+	return result
+}
+
+func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature, height uint64) {
 	start := time.Now()
 	count := len(hashes)
 
 	pendings := make([]*pollblkTransactionConfirmerPending, 0, len(hashes))
+	expired := make([]*pollblkTransactionConfirmerPending, 0)
 
 	c.lock.Lock()
 
@@ -294,8 +264,14 @@ func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
 		}
 
 		delete(c.pendings, hash)
-
 		pendings = append(pendings, pending)
+	}
+
+	for sig, pending := range c.pendings {
+		if pending.height < height {
+			delete(c.pendings, sig)
+			expired = append(expired, pending)
+		}
 	}
 
 	c.lock.Unlock()
@@ -303,7 +279,21 @@ func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature) {
 	for _, pending := range pendings {
 		c.logger.Tracef("commit transaction %p, %v", pending.iact.Payload(), pending.sig)
 		pending.iact.ReportCommit()
-		pending.channel <- nil
+		select {
+		case pending.channel <- confirmResult{false, nil}:
+		default:
+			c.logger.Warnf("transaction %p, %v: channel full or closed", pending.iact.Payload(), pending.sig)
+		}
+		close(pending.channel)
+	}
+
+	for _, pending := range expired {
+		c.logger.Tracef("transaction %p, %v expired", pending.iact.Payload(), pending.sig)
+		select {
+		case pending.channel <- confirmResult{true, nil}: // resend
+		default:
+			c.logger.Warnf("transaction %p, %v: channel full or closed", pending.iact.Payload(), pending.sig)
+		}
 		close(pending.channel)
 	}
 
@@ -331,13 +321,18 @@ func (c *pollblkTransactionConfirmer) flushPendings(err error) {
 	for _, pending := range pendings {
 		c.logger.Tracef("abort transaction %p, %v", pending.iact.Payload(), pending.sig)
 		pending.iact.ReportAbort()
-		pending.channel <- err
+		pending.channel <- confirmResult{false, err}
 		close(pending.channel)
 	}
 }
 
+type parameters struct {
+	blockhash            solana.Hash
+	lastValidBlockHeight uint64
+}
+
 type parameterProvider interface {
-	getParams(old solana.Hash) (solana.Hash, error)
+	getParams(old solana.Hash) (parameters, error)
 }
 
 type directParameterProvider struct {
@@ -352,11 +347,11 @@ func newDirectParameterProvider(client *rpc.Client, ctx context.Context) *direct
 	}
 }
 
-func (p *directParameterProvider) getParams(old solana.Hash) (solana.Hash, error) {
+func (p *directParameterProvider) getParams(old solana.Hash) (parameters, error) {
 	for {
 		result, err := p.client.GetLatestBlockhash(p.ctx, rpc.CommitmentFinalized)
 		if err != nil {
-			return solana.Hash{}, err
+			return parameters{}, err
 		}
 
 		if old == result.Value.Blockhash {
@@ -364,7 +359,7 @@ func (p *directParameterProvider) getParams(old solana.Hash) (solana.Hash, error
 			continue
 		}
 
-		return result.Value.Blockhash, nil
+		return parameters{result.Value.Blockhash, result.Value.LastValidBlockHeight}, nil
 	}
 }
 
@@ -430,17 +425,18 @@ func newCachedParameterProvider(logger core.Logger, blocks <-chan blockResult) (
 	return p, nil
 }
 
-func (p *cachedParameterProvider) getParams(old solana.Hash) (solana.Hash, error) {
+func (p *cachedParameterProvider) getParams(old solana.Hash) (parameters, error) {
 	// Fast path check with the cached value
 	p.lock.RLock()
 	last := p.last
 	p.lock.RUnlock()
 
 	if last.err != nil {
-		return solana.Hash{}, last.err
+		return parameters{}, last.err
 	}
 	if last.result.Value.Block.Blockhash != old {
-		return last.result.Value.Block.Blockhash, nil
+		return parameters{
+			last.result.Value.Block.Blockhash, *last.result.Value.Block.BlockHeight + max_processing_age}, nil
 	}
 
 	// Set up a channel just for this caller
@@ -457,7 +453,8 @@ func (p *cachedParameterProvider) getParams(old solana.Hash) (solana.Hash, error
 	// Wait for notification of a matching block
 	result := <-newBlockCh
 	if result.err != nil {
-		return solana.Hash{}, result.err
+		return parameters{}, result.err
 	}
-	return result.result.Value.Block.Blockhash, nil
+	return parameters{
+		result.result.Value.Block.Blockhash, *result.result.Value.Block.BlockHeight + max_processing_age}, nil
 }
