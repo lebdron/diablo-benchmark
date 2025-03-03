@@ -109,7 +109,7 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 		if rpcerr, ok := err.(*jsonrpc.RPCError); ok &&
 			rpcerr.Code == -32002 &&
 			strings.Contains(rpcerr.Message, "Blockhash not found") {
-
+			this.logger.Debugf("transaction %p, %v: blockhash not found, retrying", tx, sig)
 			this.confirmer.remove(sig)
 		} else if err != nil {
 			return fmt.Errorf("transaction %v failed: %w", sig, err)
@@ -288,7 +288,7 @@ func (c *pollblkTransactionConfirmer) reportHashes(hashes []solana.Signature, he
 	}
 
 	for _, pending := range expired {
-		c.logger.Tracef("transaction %p, %v expired", pending.iact.Payload(), pending.sig)
+		c.logger.Debugf("transaction %p, %v expired", pending.iact.Payload(), pending.sig)
 		select {
 		case pending.channel <- confirmResult{true, nil}: // resend
 		default:
