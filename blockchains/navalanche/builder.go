@@ -6,12 +6,14 @@ import (
 	"crypto/ecdsa"
 	"diablo-benchmark/core"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"github.com/ava-labs/coreth/core/types"
 	"github.com/ava-labs/coreth/ethclient"
 	"github.com/ava-labs/coreth/interfaces"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 type BlockchainBuilder struct {
@@ -24,6 +26,7 @@ type BlockchainBuilder struct {
 	applications    map[string]*application
 	manager         nonceManager
 	provider        parameterProvider
+	rand            *rand.Rand
 }
 
 type account struct {
@@ -48,6 +51,7 @@ func newBuilder(logger core.Logger, client ethclient.Client) *BlockchainBuilder 
 		applications:    make(map[string]*application),
 		manager:         newStaticNonceManager(logger, client),
 		provider:        newLazyParameterProvider(client),
+		rand:            rand.New(rand.NewSource(1)),
 	}
 }
 
@@ -111,10 +115,22 @@ func (this *BlockchainBuilder) CreateAccount(int) (interface{}, error) {
 
 	if this.usedAccounts < len(this.premadeAccounts) {
 		ret = &this.premadeAccounts[this.usedAccounts]
+		this.logger.Tracef("using premade account")
 		this.usedAccounts += 1
 	} else {
-		return nil, fmt.Errorf("can only use %d premade accounts",
-			this.usedAccounts)
+		private, err := ecdsa.GenerateKey(crypto.S256(), this.rand)
+		if err != nil {
+			return nil, err
+		}
+		address := crypto.PubkeyToAddress(private.PublicKey)
+		ret = &account{
+			address: &address,
+			private: private,
+			nonce:   0,
+		}
+		this.logger.Tracef("created new unfunded random account")
+		// return nil, fmt.Errorf("can only use %d premade accounts",
+		// 	this.usedAccounts)
 	}
 
 	return ret, nil
