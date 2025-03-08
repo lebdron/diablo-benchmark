@@ -110,7 +110,6 @@ func newRuntime(conn net.Conn, env, tags []string, systemMap map[string]Blockcha
 }
 
 func (this *runtime) run() error {
-	var interaction *runtimeInteraction
 	var now, nextTime, delta float64
 	var msg *msgStart
 	var err error
@@ -139,7 +138,7 @@ func (this *runtime) run() error {
 	this.lastDelayWarn = this.start
 	now = time.Now().Sub(this.start).Seconds()
 
-	for _, interaction = range this.interactions {
+	for i, interaction := range this.interactions {
 		nextTime = interaction.schedTime
 		delta = nextTime - now
 
@@ -151,6 +150,7 @@ func (this *runtime) run() error {
 
 		now = time.Now().Sub(this.start).Seconds()
 
+		Tracef("trigger interaction %p %d/%d", interaction.Payload(), i+1, len(this.interactions))
 		go interaction.trigger()
 	}
 

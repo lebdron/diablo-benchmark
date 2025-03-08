@@ -73,7 +73,7 @@ func (this *BlockchainClient) TriggerInteraction(iact core.Interaction) error {
 
 	err = this.client.SendTransaction(context.Background(), stx)
 	if err != nil && !strings.Contains("already known", err.Error()) {
-		core.Tracef("navalanche::BlockchainClient::TriggerInteraction error '%v'", err)
+		core.Tracef("navalanche::BlockchainClient::TriggerInteraction %p, %v error '%v'", tx, stx.Hash(), err)
 		iact.ReportAbort()
 		return err
 	}

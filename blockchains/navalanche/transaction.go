@@ -245,7 +245,7 @@ func (this *transferTransaction) getTx() (virtualTransaction, *types.Transaction
 		Value:     big.NewInt(int64(this.amount)),
 		Data:      []byte{},
 	})
-	core.Tracef("navalanche::transferTransaction::getTx created 'nonce '%v', gasTipCap '%v', gasFeeCap '%v', gas '%v', to '%v', value '%v', from '%v'", tx.Nonce(), tx.GasTipCap(), tx.GasFeeCap(), tx.Gas(), tx.To(), tx.Value(), from)
+	// core.Tracef("navalanche::transferTransaction::getTx created 'nonce '%v', gasTipCap '%v', gasFeeCap '%v', gas '%v', to '%v', value '%v', from '%v'", tx.Nonce(), tx.GasTipCap(), tx.GasFeeCap(), tx.Gas(), tx.To(), tx.Value(), from)
 
 	return newUnsignedTransaction(params.chainId, tx,
 		this.from).getTx()
@@ -466,16 +466,17 @@ func (this *staticNonceManager) getNonce(from common.Address) (*staticNonce, err
 	if ret.synced {
 		err = nil
 	} else {
-		ret.base, err = this.client.AcceptedNonceAt(this.ctx, from)
+		// ret.base, err = this.client.AcceptedNonceAt(this.ctx, from)
+		ret.base = 0
 
-		if err == nil {
-			this.logger.Tracef("pending nonce for '%s' = %d", key,
-				ret.base)
-			ret.synced = true
-		} else {
-			this.logger.Errorf("fail to fetch pending nonce "+
-				"for '%s': %s", key, err.Error())
-		}
+		// if err == nil {
+		// this.logger.Tracef("pending nonce for '%s' = %d", key,
+		// 	ret.base)
+		ret.synced = true
+		// } else {
+		// 	this.logger.Errorf("fail to fetch pending nonce "+
+		// 		"for '%s': %s", key, err.Error())
+		// }
 	}
 
 	return ret, err
