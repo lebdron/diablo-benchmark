@@ -501,6 +501,20 @@ func mainPrimary(verbosity int, env []string, args []string) {
 	shorts = append(shorts, shortOption{'O', true, numObserverClosure})
 	longs = append(longs, longOption{"observers", true, numObserverClosure})
 
+	primary.Timeout = 100
+	timeoutDefined := false
+	timeoutClosure := func(l string) error {
+		if timeoutDefined {
+			return fmt.Errorf("option specified twice")
+		}
+
+		timeoutDefined = true
+
+		return handleSeconds(&primary.Timeout, l)
+	}
+	shorts = append(shorts, shortOption{'T', true, timeoutClosure})
+	longs = append(longs, longOption{"timeout", true, timeoutClosure})
+
 	primary.MaxSkew = MAX_SKEW_DEFAULT
 	maxSkewDefined = false
 	maxSkewClosure = func(l string) error {

@@ -24,6 +24,8 @@ type Nprimary struct {
 
 	MaxDelay float64
 
+	Timeout float64
+
 	Env []string
 }
 
@@ -262,6 +264,7 @@ func newRemoteSecondary(conn net.Conn, setup setup, primary *Nprimary) (*remoteS
 		chainParams: setup.parameters(),
 		maxDelay:    primary.MaxDelay,
 		maxSkew:     primary.MaxSkew,
+		timeout:     primary.Timeout,
 	})
 
 	if err != nil {
