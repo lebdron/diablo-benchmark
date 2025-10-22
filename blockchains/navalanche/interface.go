@@ -12,8 +12,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/ava-labs/coreth/ethclient"
+	"github.com/ava-labs/coreth/rpc"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/gorilla/websocket"
 )
 
 type BlockchainInterface struct {
@@ -165,10 +167,22 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	logger.Tracef("new client")
 
 	logger.Tracef("use endpoint '%s'", view[0])
-	client, err := ethclient.Dial("ws://" + view[0])
+
+	metrics := core.NewMetrics()
+	wrapperFactory := func(conn *websocket.Conn) rpc.WebsocketWrappers {
+		ic := core.NewInstrumentedConn(conn, metrics)
+		return rpc.WebsocketWrappers{
+			ReadJSON:  ic.ReadJSON,
+			WriteJSON: ic.WriteJSON,
+		}
+	}
+
+	c, err := rpc.DialOptions(
+		ctx, "ws://"+view[0], rpc.WithWebsocketWrapperFactory(wrapperFactory))
 	if err != nil {
 		return nil, err
 	}
+	client := ethclient.NewClient(c)
 
 	for key, value = range params {
 		if key == "prepare" {

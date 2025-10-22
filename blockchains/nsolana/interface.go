@@ -7,13 +7,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
+	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/gagliardetto/solana-go/rpc/ws"
+	"github.com/klauspost/compress/gzhttp"
 )
 
 type BlockchainInterface struct {
@@ -120,13 +124,45 @@ func addPremadeAccounts(builder *BlockchainBuilder, path string) error {
 	return nil
 }
 
+var (
+	defaultMaxIdleConnsPerHost = 9
+	defaultTimeout             = 5 * time.Minute
+	defaultKeepAlive           = 180 * time.Second
+)
+
 func (this *BlockchainInterface) Client(params map[string]string, env, view []string, logger core.Logger) (core.BlockchainClient, error) {
 	ctx := context.Background()
 
 	logger.Tracef("new client")
 
 	logger.Tracef("use endpoint '%s'", view[0])
-	client := rpc.New("http://" + view[0])
+	metrics := core.NewMetrics()
+	transport := core.NewInstrumentedRoundTripper(&http.Transport{
+		IdleConnTimeout:     defaultTimeout,
+		MaxConnsPerHost:     defaultMaxIdleConnsPerHost,
+		MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
+		Proxy:               http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   defaultTimeout,
+			KeepAlive: defaultKeepAlive,
+			DualStack: true,
+		}).DialContext,
+		ForceAttemptHTTP2: true,
+		// MaxIdleConns:          100,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// ExpectContinueTimeout: 1 * time.Second,
+	},
+		metrics,
+	)
+	opts := &jsonrpc.RPCClientOpts{
+		HTTPClient: &http.Client{
+			Timeout:   defaultTimeout,
+			Transport: gzhttp.Transport(transport),
+		},
+	}
+	rpcClient := jsonrpc.NewClientWithOpts("http://"+view[0], opts)
+	client := rpc.NewWithCustomRPCClient(rpcClient)
+	// client := rpc.New("http://" + view[0])
 
 	ip, portStr, err := net.SplitHostPort(view[0])
 	if err != nil {

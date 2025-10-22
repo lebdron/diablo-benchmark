@@ -8,6 +8,7 @@ require (
 	github.com/diem/client-sdk-go v1.2.1
 	github.com/ethereum/go-ethereum v1.11.4
 	github.com/gagliardetto/solana-go v1.8.3
+	github.com/gorilla/websocket v1.4.2
 	github.com/novifinancial/serde-reflection/serde-generate/runtime/golang v0.0.0-20201214184956-1fd02a932898
 	github.com/portto/aptos-go-sdk v0.0.0-20230807103729-9a5201cad72f
 	github.com/the729/lcs v0.1.5
@@ -47,7 +48,6 @@ require (
 	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/gorilla/rpc v1.2.0 // indirect
-	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/hasura/go-graphql-client v0.9.1 // indirect
 	github.com/holiman/big v0.0.0-20221017200358-a027dc42d04e // indirect
 	github.com/holiman/uint256 v1.2.0 // indirect
@@ -87,4 +87,8 @@ require (
 	nhooyr.io/websocket v1.8.7 // indirect
 )
 
-replace github.com/portto/aptos-go-sdk => github.com/lebdron/aptos-go-sdk v0.0.0-20231007002036-aacfcea1bb02
+replace github.com/portto/aptos-go-sdk => github.com/lebdron/aptos-go-sdk v0.0.0-20250831144530-57aed8a2b303
+
+replace github.com/ava-labs/coreth => github.com/lebdron/coreth v0.12.4-rc.0.0.20250903060600-3c4e2c8329ee
+
+replace github.com/ethereum/go-ethereum => github.com/lebdron/go-ethereum v1.11.5-0.20250904063520-e4db02b4323a

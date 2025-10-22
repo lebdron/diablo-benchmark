@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	aptosclient "github.com/portto/aptos-go-sdk/client"
 	aptosmodels "github.com/portto/aptos-go-sdk/models"
@@ -42,7 +44,13 @@ func (i *BlockchainInterface) Builder(params map[string]string, env []string, en
 	}
 
 	logger.Debugf("use endpoint '%s'", endpoint)
+	metrics := core.NewMetrics()
+	transport := core.NewInstrumentedRoundTripper(http.DefaultTransport, metrics)
 	client := aptosclient.NewAptosClient("http://" + endpoint)
+	aptosclient.SetHTTPClient(&http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second,
+	})
 
 	mintkey, ok = params["mintkey"]
 	if !ok {

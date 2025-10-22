@@ -38,6 +38,7 @@ import (
 	"crypto/ed25519"
 	"diablo-benchmark/core"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -184,17 +185,17 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	var confirmer transactionConfirmer
 	var preparer transactionPreparer
 	var provider parameterProvider
-	var client *algod.Client
 	var ctx context.Context
 	var key, value string
-	var err error
 
 	ctx = context.Background()
 
 	logger.Tracef("new client")
 
 	logger.Tracef("use endpoint '%s'", view[0])
-	client, err = algod.MakeClient("http://"+view[0], benchmarkToken)
+	metrics := core.NewMetrics()
+	transport := core.NewInstrumentedRoundTripper(http.DefaultTransport, metrics)
+	client, err := algod.MakeClientWithTransport("http://"+view[0], benchmarkToken, nil, transport)
 	if err != nil {
 		return nil, err
 	}
