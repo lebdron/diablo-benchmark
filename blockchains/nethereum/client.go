@@ -9,23 +9,27 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 )
 
 type BlockchainClient struct {
 	logger    core.Logger
 	client    *ethclient.Client
+	rpcClient *rpc.Client
 	manager   nonceManager
 	provider  parameterProvider
 	preparer  transactionPreparer
 	confirmer transactionConfirmer
 }
 
-func newClient(logger core.Logger, client *ethclient.Client, manager nonceManager, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
+func newClient(logger core.Logger, client *ethclient.Client, rpcClient *rpc.Client, manager nonceManager, provider parameterProvider, preparer transactionPreparer, confirmer transactionConfirmer) *BlockchainClient {
 	return &BlockchainClient{
 		logger:    logger,
 		client:    client,
+		rpcClient: rpcClient,
 		manager:   manager,
 		provider:  provider,
 		preparer:  preparer,
@@ -123,6 +127,7 @@ type transactionConfirmer interface {
 type pollblkTransactionConfirmer struct {
 	logger    core.Logger
 	client    *ethclient.Client
+	rpcClient *rpc.Client
 	ctx       context.Context
 	err       error
 	lock      sync.Mutex
@@ -135,11 +140,12 @@ type pollblkTransactionConfirmerPending struct {
 	iact    core.Interaction
 }
 
-func newPollblkTransactionConfirmer(logger core.Logger, client *ethclient.Client, ctx context.Context) *pollblkTransactionConfirmer {
+func newPollblkTransactionConfirmer(logger core.Logger, client *ethclient.Client, rpcClient *rpc.Client, ctx context.Context) *pollblkTransactionConfirmer {
 	var this pollblkTransactionConfirmer
 
 	this.logger = logger
 	this.client = client
+	this.rpcClient = rpcClient
 	this.ctx = ctx
 	this.err = nil
 	this.pendings = make(map[string]*pollblkTransactionConfirmerPending)
@@ -255,6 +261,25 @@ func (this *pollblkTransactionConfirmer) flushPendings(err error) {
 	}
 }
 
+func toBlockNumArg(number *big.Int) string {
+	if number == nil {
+		return "latest"
+	}
+	pending := big.NewInt(-1)
+	if number.Cmp(pending) == 0 {
+		return "pending"
+	}
+	finalized := big.NewInt(int64(rpc.FinalizedBlockNumber))
+	if number.Cmp(finalized) == 0 {
+		return "finalized"
+	}
+	safe := big.NewInt(int64(rpc.SafeBlockNumber))
+	if number.Cmp(safe) == 0 {
+		return "safe"
+	}
+	return hexutil.EncodeBig(number)
+}
+
 func (this *pollblkTransactionConfirmer) processBlock(number *big.Int) error {
 	var stxs []*types.Transaction
 	var stx *types.Transaction
@@ -265,8 +290,8 @@ func (this *pollblkTransactionConfirmer) processBlock(number *big.Int) error {
 
 	this.logger.Tracef("poll new block (number = %d)", number)
 
-	block, err = this.client.BlockByNumber(this.ctx, number)
-	if err != nil {
+	err = this.rpcClient.CallContext(this.ctx, &block, "eth_getBlockByNumber", toBlockNumArg(number), false)
+	if err != nil || block == nil {
 		return err
 	}
 

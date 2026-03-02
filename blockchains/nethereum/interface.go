@@ -182,12 +182,12 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 		}
 	}
 
-	c, err := rpc.DialOptions(
+	rpcClient, err := rpc.DialOptions(
 		ctx, "ws://"+view[0], rpc.WithWebsocketWrapperFactory(wrapperFactory))
 	if err != nil {
 		return nil, err
 	}
-	client := ethclient.NewClient(c)
+	client := ethclient.NewClient(rpcClient)
 
 	for key, value = range params {
 		if key == "prepare" {
@@ -215,9 +215,9 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 	}
 
 	manager = newStaticNonceManager(logger, client)
-	confirmer = newPollblkTransactionConfirmer(logger, client, ctx)
+	confirmer = newPollblkTransactionConfirmer(logger, client, rpcClient, ctx)
 
-	return newClient(logger, client, manager, provider, preparer,
+	return newClient(logger, client, rpcClient, manager, provider, preparer,
 		confirmer), nil
 }
 
