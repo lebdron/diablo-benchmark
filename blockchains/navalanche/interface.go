@@ -170,7 +170,7 @@ func (this *BlockchainInterface) Client(params map[string]string, env, view []st
 
 	metrics := core.NewMetrics()
 	wrapperFactory := func(conn *websocket.Conn) rpc.WebsocketWrappers {
-		ic := core.NewInstrumentedConn(conn, metrics)
+		ic := core.NewInstrumentedConn(conn, metrics, logger)
 		return rpc.WebsocketWrappers{
 			ReadJSON:  ic.ReadJSON,
 			WriteJSON: ic.WriteJSON,

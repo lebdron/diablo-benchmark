@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
@@ -280,10 +281,14 @@ func toBlockNumArg(number *big.Int) string {
 	return hexutil.EncodeBig(number)
 }
 
+type TransactionBlock struct {
+	Transactions []common.Hash `json:"transactions"`
+}
+
 func (this *pollblkTransactionConfirmer) processBlock(number *big.Int) error {
-	var stxs []*types.Transaction
-	var stx *types.Transaction
-	var block *types.Block
+	var stxs []common.Hash
+	var stx common.Hash
+	var block *TransactionBlock
 	var hashes []string
 	var err error
 	var i int
@@ -292,10 +297,11 @@ func (this *pollblkTransactionConfirmer) processBlock(number *big.Int) error {
 
 	err = this.rpcClient.CallContext(this.ctx, &block, "eth_getBlockByNumber", toBlockNumArg(number), false)
 	if err != nil || block == nil {
+		this.logger.Errorf("failed to get block (number = %d, err = %s)", number, err)
 		return err
 	}
 
-	stxs = block.Transactions()
+	stxs = block.Transactions
 	hashes = make([]string, len(stxs))
 
 	if len(stxs) == 0 {
@@ -303,7 +309,7 @@ func (this *pollblkTransactionConfirmer) processBlock(number *big.Int) error {
 	}
 
 	for i, stx = range stxs {
-		hashes[i] = stx.Hash().String()
+		hashes[i] = stx.String()
 	}
 
 	this.reportHashes(hashes)
@@ -333,9 +339,11 @@ loop:
 		case event = <-events:
 			err = this.processBlock(event.Number)
 			if err != nil {
+				this.logger.Errorf("failed to process block (number = %d, err = %s)", event.Number, err)
 				break loop
 			}
 		case err = <-subcription.Err():
+			this.logger.Errorf("subscription error: %s", err)
 			break loop
 		case <-this.ctx.Done():
 			err = this.ctx.Err()

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"sync/atomic"
@@ -64,12 +65,14 @@ func (i *InstrumentedRoundTripper) RoundTrip(req *http.Request) (*http.Response,
 type InstrumentedConn struct {
 	*websocket.Conn
 	metrics *Metrics
+	logger  Logger
 }
 
-func NewInstrumentedConn(conn *websocket.Conn, metrics *Metrics) *InstrumentedConn {
+func NewInstrumentedConn(conn *websocket.Conn, metrics *Metrics, logger Logger) *InstrumentedConn {
 	return &InstrumentedConn{
 		Conn:    conn,
 		metrics: metrics,
+		logger:  logger,
 	}
 }
 
@@ -89,6 +92,20 @@ func (ic *InstrumentedConn) NextReader() (int, io.Reader, error) {
 		return messageType, &countingReader{Reader: r, counter: &ic.metrics.ReceivedBytes}, nil
 	}
 	return messageType, r, err
+}
+
+func (ic *InstrumentedConn) ReadJSON(v interface{}) error {
+	_, r, err := ic.NextReader()
+	if err != nil {
+		return err
+	}
+	err = json.NewDecoder(r).Decode(v)
+	// ic.logger.Tracef("Received message: %v", v)
+	if err == io.EOF {
+		// One value is expected in the message.
+		err = io.ErrUnexpectedEOF
+	}
+	return err
 }
 
 type countingReadCloser struct {
